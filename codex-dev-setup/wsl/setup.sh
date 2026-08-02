@@ -2,10 +2,12 @@
 set -euo pipefail
 
 MODE="what-if"
-CODE_ROOT="$HOME/code"
+CODE_ROOT=""
 SHARE_CODEX_HOME=""
 INSTALL_NODE=0
 INSTALL_PYTHON=0
+APT_PACKAGES=()
+COMMAND_ALIASES=()
 ROLLBACK=0
 NETWORK_ONLY=0
 PROXY_MODE="keep"
@@ -15,7 +17,6 @@ PROXY_SOCKS_PORT="10808"
 SUDO_AUTH_FAILURE_EXIT=77
 SUDO_UNAVAILABLE_EXIT=78
 SHELL_MARKER_FAILURE_EXIT=79
-BASE_PACKAGES=(git curl ca-certificates build-essential unzip zip jq ripgrep fd-find)
 APT_OPTIONS=(-o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o DPkg::Lock::Timeout=60)
 SUDO=()
 TEMP_FILES=()
@@ -38,6 +39,7 @@ Usage:
   setup.sh [--what-if|--apply] [--code-root ~/code]
            [--share-codex-home /mnt/c/Users/name/.codex]
            [--install-node] [--install-python] [--rollback]
+           [--apt-package name] [--command-alias name=target]
            [--network-only] [--proxy-mode keep|persistent|none]
            [--proxy-host 127.0.0.1] [--proxy-http-port 10808]
            [--proxy-socks-port 10808]
@@ -58,6 +60,8 @@ while [[ $# -gt 0 ]]; do
     --share-codex-home) SHARE_CODEX_HOME="$2"; shift 2 ;;
     --install-node) INSTALL_NODE=1; shift ;;
     --install-python) INSTALL_PYTHON=1; shift ;;
+    --apt-package) APT_PACKAGES+=("$2"); shift 2 ;;
+    --command-alias) COMMAND_ALIASES+=("$2"); shift 2 ;;
     --rollback) ROLLBACK=1; shift ;;
     --network-only) NETWORK_ONLY=1; shift ;;
     --proxy-mode) PROXY_MODE="$2"; shift 2 ;;
@@ -67,6 +71,24 @@ while [[ $# -gt 0 ]]; do
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
   esac
+done
+
+if [[ "$NETWORK_ONLY" -eq 0 && "$ROLLBACK" -eq 0 && -z "$CODE_ROOT" ]]; then
+  echo 'Missing required argument: --code-root' >&2
+  exit 2
+fi
+
+for package in "${APT_PACKAGES[@]}"; do
+  if [[ ! "$package" =~ ^[a-z0-9][a-z0-9+.-]*$ ]]; then
+    echo "Invalid APT package name: $package" >&2
+    exit 2
+  fi
+done
+for alias_spec in "${COMMAND_ALIASES[@]}"; do
+  if [[ ! "$alias_spec" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*=[A-Za-z0-9][A-Za-z0-9._+-]*$ ]]; then
+    echo "Invalid command alias: $alias_spec" >&2
+    exit 2
+  fi
 done
 
 START_MARKER="# >>> CodexDevSetup:WSL >>>"
@@ -83,9 +105,9 @@ PROXY_FILE="$HOME/.config/codex/proxy.sh"
 STATE_ROOT="$HOME/.local/state/codex-dev-setup"
 DETAIL_LOG=""
 
-# Bash does not expand a tilde that arrives through a variable. The Windows
-# caller intentionally passes ~/code so normalize it before testing or making
-# the directory.
+# Bash does not expand a tilde that arrives through a variable. Normalize it
+# for direct helper invocations; the PowerShell workflow normally passes an
+# already resolved Linux absolute path.
 if [[ "$CODE_ROOT" == '~' ]]; then
   CODE_ROOT="$HOME"
 elif [[ "$CODE_ROOT" == ~/* ]]; then
@@ -351,16 +373,16 @@ if [[ "$NETWORK_ONLY" -eq 0 ]]; then
 stage '开始准备 Linux 开发环境'
 say "项目目录：$CODE_ROOT"
 
-missing_base_packages=()
-for package in "${BASE_PACKAGES[@]}"; do
+missing_apt_packages=()
+for package in "${APT_PACKAGES[@]}"; do
   if ! is_package_installed "$package"; then
-    missing_base_packages+=("$package")
+    missing_apt_packages+=("$package")
   fi
 done
 
-if [[ "${#missing_base_packages[@]}" -gt 0 ]]; then
-  stage '安装 Ubuntu 基础工具'
-  say "需要安装：${missing_base_packages[*]}"
+if [[ "${#missing_apt_packages[@]}" -gt 0 ]]; then
+  stage '安装已配置的 Ubuntu 软件包'
+  say "需要安装：${missing_apt_packages[*]}"
   if [[ "$MODE" == "apply" ]]; then
     ensure_sudo
   fi
@@ -370,38 +392,48 @@ if [[ "${#missing_base_packages[@]}" -gt 0 ]]; then
   else
     run_quiet_with_progress '仍在更新软件列表' "${SUDO[@]}" apt-get "${APT_OPTIONS[@]}" update
   fi
-  say '步骤 2/2：正在安装缺少的工具，通常需要 1–3 分钟……'
+  say '步骤 2/2：正在安装缺少的软件包，通常需要 1–3 分钟……'
   if [[ "$MODE" == "what-if" ]]; then
-    run_apt "${APT_OPTIONS[@]}" install -y "${missing_base_packages[@]}"
+    run_apt "${APT_OPTIONS[@]}" install -y "${missing_apt_packages[@]}"
   else
-    run_quiet_with_progress '仍在安装 Ubuntu 基础工具' "${SUDO[@]}" apt-get "${APT_OPTIONS[@]}" install -y "${missing_base_packages[@]}"
+    run_quiet_with_progress '仍在安装 Ubuntu 软件包' "${SUDO[@]}" apt-get "${APT_OPTIONS[@]}" install -y "${missing_apt_packages[@]}"
   fi
   if [[ "$MODE" == "what-if" ]]; then
     say '预览完成：以上命令尚未执行。'
   else
-    say 'Ubuntu 基础工具安装完成。'
+    for package in "${missing_apt_packages[@]}"; do
+      installed_version="$(dpkg-query -W -f='${Version}' "$package" 2>/dev/null || true)"
+      if [[ -n "$installed_version" ]]; then
+        say "已安装 $package $installed_version"
+      else
+        say "已安装 $package；暂时无法读取版本。"
+      fi
+    done
   fi
 else
-  stage '检查 Ubuntu 基础工具'
-  say '所需工具已齐全，无需更新软件包列表或重复安装。'
+  stage '检查已配置的 Ubuntu 软件包'
+  say '已启用的软件包组均已齐全，无需更新软件包列表或重复安装。'
 fi
 
-# Ubuntu/Debian installs the fd utility under the command name "fdfind" to
-# avoid a package-name collision. Provide the standard cross-platform command
-# in the user's own bin directory without changing system files.
-if command -v fdfind >/dev/null 2>&1; then
-  fd_target="$(command -v fdfind)"
-  fd_link="$HOME/.local/bin/fd"
-  if [[ -e "$fd_link" ]] && [[ ! -L "$fd_link" ]]; then
-    say "未创建 fd 快捷入口：$fd_link 已存在且不是符号链接。"
-  elif [[ ! -L "$fd_link" ]] || [[ "$(readlink "$fd_link")" != "$fd_target" ]]; then
+# Some Debian packages expose a distro-specific command name. Create only the
+# explicitly configured aliases in the user's bin directory.
+for alias_spec in "${COMMAND_ALIASES[@]}"; do
+  alias_name="${alias_spec%%=*}"
+  target_name="${alias_spec#*=}"
+  alias_link="$HOME/.local/bin/$alias_name"
+  target_path="$(command -v "$target_name" 2>/dev/null || true)"
+  if [[ -z "$target_path" ]]; then
+    say "未创建 $alias_name 快捷入口：目标命令 $target_name 不可用。"
+  elif [[ -e "$alias_link" ]] && [[ ! -L "$alias_link" ]]; then
+    say "未创建 $alias_name 快捷入口：$alias_link 已存在且不是符号链接。"
+  elif [[ ! -L "$alias_link" ]] || [[ "$(readlink "$alias_link")" != "$target_path" ]]; then
     run mkdir -p "$HOME/.local/bin"
-    run ln -sfn "$fd_target" "$fd_link"
-    say '已准备 fd 命令（Ubuntu 的 fd-find 软件包默认使用 fdfind 名称）。'
+    run ln -sfn "$target_path" "$alias_link"
+    say "已准备 $alias_name 命令（指向 $target_name）。"
   else
-    say 'fd 命令已可用，无需重复创建快捷入口。'
+    say "$alias_name 命令已可用，无需重复创建快捷入口。"
   fi
-fi
+done
 
 if [[ -d "$CODE_ROOT" ]]; then
   say "项目目录已存在，无需创建：$CODE_ROOT"

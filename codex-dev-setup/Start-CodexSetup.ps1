@@ -38,6 +38,7 @@ function Resolve-SetupConfiguration {
     $defaults = Read-SetupConfig -Path (Join-Path $PSScriptRoot 'config\defaults.json')
     Merge-MissingSetupConfig -Target $config -Defaults $defaults
     $config.paths.windowsProjects = [Environment]::ExpandEnvironmentVariables($config.paths.windowsProjects)
+    [void](Get-WslPackageConfiguration -Config $config)
     return $config
 }
 
@@ -94,7 +95,8 @@ function Get-RecentRollbackManifest {
 function Get-DetectionCacheKey {
     param(
         [AllowNull()][string]$TargetProject,
-        [bool]$DeepDetection
+        [bool]$DeepDetection,
+        [Parameter(Mandatory)]$Config
     )
     $normalizedProject = if ([string]::IsNullOrWhiteSpace($TargetProject)) {
         '<none>'
@@ -103,16 +105,24 @@ function Get-DetectionCacheKey {
         try { [System.IO.Path]::GetFullPath($TargetProject).TrimEnd('\').ToLowerInvariant() }
         catch { $TargetProject.Trim().ToLowerInvariant() }
     }
-    return "$(if ($DeepDetection) { 'full' } else { 'quick' })|$normalizedProject"
+    $wslPackages = Get-WslPackageConfiguration -Config $Config
+    $packageFingerprint = @(
+        @($wslPackages.packageNames)
+        @($wslPackages.commandNames)
+        @($wslPackages.aliases | ForEach-Object { "$($_.name)=$($_.target)" })
+        [string]$Config.paths.wslProjects
+    ) -join ','
+    return "$(if ($DeepDetection) { 'full' } else { 'quick' })|$normalizedProject|$packageFingerprint"
 }
 
 function Get-CachedSetupDetection {
     param(
         [AllowNull()][string]$TargetProject,
         [bool]$DeepDetection,
-        [bool]$ForceRefresh
+        [bool]$ForceRefresh,
+        [Parameter(Mandatory)]$Config
     )
-    $cacheKey = Get-DetectionCacheKey -TargetProject $TargetProject -DeepDetection:$DeepDetection
+    $cacheKey = Get-DetectionCacheKey -TargetProject $TargetProject -DeepDetection:$DeepDetection -Config $Config
     $now = Get-Date
     if (-not $ForceRefresh -and $script:detectionCache.ContainsKey($cacheKey)) {
         $cached = $script:detectionCache[$cacheKey]
@@ -130,7 +140,7 @@ function Get-CachedSetupDetection {
         [void]$script:detectionCache.Remove($cacheKey)
     }
 
-    $detection = Get-CodexSetupDetection -ProjectPath $TargetProject -DeepWsl:$DeepDetection
+    $detection = Get-CodexSetupDetection -ProjectPath $TargetProject -DeepWsl:$DeepDetection -Config $Config
     $cacheEntry = [pscustomobject]@{
         createdAt = Get-Date
         detection = $detection
@@ -138,7 +148,7 @@ function Get-CachedSetupDetection {
     $script:detectionCache[$cacheKey] = $cacheEntry
     # 完整检测已包含快速检测的全部信息，可直接满足同项目的后续快速请求。
     if ($DeepDetection) {
-        $quickCacheKey = Get-DetectionCacheKey -TargetProject $TargetProject -DeepDetection:$false
+        $quickCacheKey = Get-DetectionCacheKey -TargetProject $TargetProject -DeepDetection:$false -Config $Config
         $script:detectionCache[$quickCacheKey] = $cacheEntry
     }
     return $detection
@@ -197,6 +207,10 @@ function Invoke-ReportShortcut {
 function Show-WorkflowCompletion {
     param([Parameter(Mandatory)]$WorkflowResult)
 
+    $workflowConfig = Get-DisplayProperty -InputObject $WorkflowResult -Name 'config'
+    $configuredPaths = Get-DisplayProperty -InputObject $workflowConfig -Name 'paths'
+    $windowsProjects = [string](Get-DisplayProperty -InputObject $configuredPaths -Name 'windowsProjects' -DefaultValue '配置的项目目录')
+    $wslProjects = [string](Get-DisplayProperty -InputObject $configuredPaths -Name 'wslProjects' -DefaultValue '配置的项目目录')
     $verificationDetection = Get-DisplayProperty -InputObject $WorkflowResult -Name 'verificationDetection'
     $detection = if ($null -ne $verificationDetection) { $verificationDetection } else { $WorkflowResult.detection }
     $score = [int](Get-DisplayProperty -InputObject $detection -Name 'healthScore' -DefaultValue 0)
@@ -289,15 +303,15 @@ function Show-WorkflowCompletion {
             Write-Host '  2. 在 Codex Desktop Settings 中选择 Windows 工作方式和 PowerShell 终端。'
             Write-Host '  3. 打开 Windows Terminal 的“Codex Windows (PowerShell 7)”，逐行运行：'
             Write-Host '       git --version    node --version    python --version' -ForegroundColor DarkCyan
-            Write-Host '  4. 在 Windows 的 source 文件夹中新建或打开项目，然后交给 Codex。'
+            Write-Host "  4. 在 Windows 的 $windowsProjects 文件夹中新建或打开项目，然后交给 Codex。"
         }
         else {
             Write-Host '  2. 在 Codex Desktop Settings 中选择 WSL/Linux 工作方式和 WSL/Linux 终端。'
             Write-Host '  3. 打开 Windows Terminal 的“Codex WSL (Ubuntu)”，逐行运行：'
-            Write-Host '       git --version    node --version    python3 --version' -ForegroundColor DarkCyan
-            Write-Host '  4. 在 Linux 的 ~/code 文件夹中新建或打开项目，然后交给 Codex。'
+            Write-Host '       git --version    gh --version    node --version    python3 --version' -ForegroundColor DarkCyan
+            Write-Host "  4. 在 Linux 的 $wslProjects 文件夹中新建或打开项目，然后交给 Codex。"
         }
-        Write-Host '     三条命令都显示版本号，即表示主要开发环境可用。' -ForegroundColor DarkGray
+        Write-Host '     上述命令都显示版本号，即表示主要开发环境可用。' -ForegroundColor DarkGray
         Write-Host '     如需使用 GitHub：运行 gh auth status；尚未登录时运行 gh auth login。' -ForegroundColor DarkGray
     }
 
@@ -327,7 +341,7 @@ function Invoke-Workflow {
     $runtime = Initialize-SetupRuntime
     $succeeded = $false
     try {
-        $detection = Get-CachedSetupDetection -TargetProject $TargetProject -DeepDetection:$DeepDetection -ForceRefresh:$ForceRefresh
+        $detection = Get-CachedSetupDetection -TargetProject $TargetProject -DeepDetection:$DeepDetection -ForceRefresh:$ForceRefresh -Config $Config
         if ($WorkflowMode -eq 'Apply' -and -not $NonInteractive -and $detection.wsl.ubuntuWsl2 -and [int]$detection.windows.build -ge 22621) {
             Select-WslNetworkConfiguration -Config $Config -Detection $detection
         }
@@ -357,7 +371,7 @@ function Invoke-Workflow {
         }).Count -gt 0) {
             Write-SetupStatus -Kind Info -Message '正在快速复核本次已完成的设置…'
             # 复核 Windows 侧核心工具即可；不重复启动 WSL，已完成的操作会从待设置列表排除。
-            $verificationDetection = Get-CachedSetupDetection -TargetProject $TargetProject -DeepDetection:$false -ForceRefresh:$true
+            $verificationDetection = Get-CachedSetupDetection -TargetProject $TargetProject -DeepDetection:$false -ForceRefresh:$true -Config $Config
             $remainingPlan = Get-CodexSetupPlan -Detection $verificationDetection -Config $Config -ProjectPath $TargetProject
             $originalActionIds = @($plan.actions | ForEach-Object { Get-DisplayProperty -InputObject $_ -Name 'id' } | Where-Object { $_ } | Select-Object -Unique)
             $completedIds = @($results | Where-Object {
@@ -389,6 +403,7 @@ function Invoke-Workflow {
             deepDetection=$DeepDetection
             remainingPlan=$remainingPlan
             verificationDetection=$verificationDetection
+            config=$Config
         }
     }
     finally {

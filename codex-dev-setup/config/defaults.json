@@ -49,6 +49,52 @@
     "credentialAndSshGuidanceOnly": true,
     "moveExistingRepositories": false
   },
+  "wslEnvironment": {
+    "additionalCommandProbes": [
+      "node",
+      "npm",
+      "python3",
+      "uv",
+      "fnm",
+      "codex"
+    ],
+    "packageGroups": [
+      {
+        "id": "base",
+        "label": "Linux 基础工具",
+        "enabled": true,
+        "required": true,
+        "packages": [
+          { "name": "git", "commands": ["git"] },
+          { "name": "curl", "commands": [] },
+          { "name": "ca-certificates", "commands": [] },
+          { "name": "build-essential", "commands": [] },
+          { "name": "unzip", "commands": [] },
+          { "name": "zip", "commands": [] },
+          { "name": "jq", "commands": ["jq"] },
+          { "name": "ripgrep", "commands": ["rg"] },
+          {
+            "name": "fd-find",
+            "commands": ["fd", "fdfind"],
+            "aliases": [
+              { "name": "fd", "target": "fdfind" }
+            ]
+          },
+          { "name": "gh", "commands": ["gh"] }
+        ]
+      },
+      {
+        "id": "shell-quality",
+        "label": "Shell 开发质量工具（可选）",
+        "enabled": false,
+        "required": false,
+        "packages": [
+          { "name": "shellcheck", "commands": ["shellcheck"] },
+          { "name": "shfmt", "commands": ["shfmt"] }
+        ]
+      }
+    ]
+  },
   "toolchains": {
     "node": {
       "enabled": true,

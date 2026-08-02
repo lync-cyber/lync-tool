@@ -14,6 +14,7 @@
 
 ## 3. 可重复与低侵入配置
 
+- `config/defaults.json` 是 WSL 软件包的唯一配置入口。包组包含启用状态、用途、APT 包、探测命令和兼容别名；公共解析器统一校验、去重并生成 Detection/Planning/Actions 使用的结构。Bash helper 不内置软件清单，只消费逐项参数并再次校验。
 - Codex TOML 只更新已管理的 key，保留其他用户配置和注释；现有 `[windows]` section 被复用，不追加重复 section。
 - PowerShell 与 WSL shell 配置使用具名 marker block，重复运行会替换该区块。
 - Windows Terminal 用官方 JSON fragment 添加两个 profile，不解析或覆盖可能含 JSONC 注释的用户 `settings.json`。
@@ -31,7 +32,7 @@ Node 使用 fnm，项目以 `.node-version` 或 package manager metadata 锁定�
 
 ## 6. 日志与秘密
 
-日志仅记录 action、命令名、非秘密参数、结果和路径；常见 token/key 形态再次经过 redaction。脚本不执行 `gh auth status --show-token`、不枚举 `.ssh` 内容、不读取 `.env`、不复制 auth 文件。共享 `CODEX_HOME` 只是写入 WSL 环境变量指针。
+日志仅记录 action、命令名、非秘密参数、结果、软件版本和路径；常见 token/key 形态再次经过 redaction。脚本只以收起输出的 `gh auth status` 判断 WSL 登录状态，不执行 `--show-token`、不自动登录、不修改 remote、不枚举 `.ssh` 内容、不读取 `.env`、不复制 auth 文件。共享 `CODEX_HOME` 只是写入 WSL 环境变量指针。
 
 PATH 诊断按安装根目录归类候选：不同安装来源才作为冲突影响健康评分；同一安装的多个入口、应用执行别名和重复 PATH 目录只作为信息展示，不自动清理。
 

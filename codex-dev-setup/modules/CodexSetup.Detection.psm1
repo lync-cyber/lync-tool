@@ -434,10 +434,13 @@ function Get-PathDiagnostics {
 
 function Get-ProjectRecommendation {
     [CmdletBinding()]
-    param([AllowNull()][string]$ProjectPath)
+    param(
+        [AllowNull()][string]$ProjectPath,
+        [Parameter(Mandatory)][string]$WslProjects
+    )
 
     if ([string]::IsNullOrWhiteSpace($ProjectPath)) {
-        return [pscustomobject]@{ path = $null; exists = $false; agent = 'WSL'; terminal = 'WSL'; confidence = 'medium'; reasons = @('新建 Web/Python 项目默认推荐 Linux-native 工具链与 WSL 的 ~/code。') }
+        return [pscustomobject]@{ path = $null; exists = $false; agent = 'WSL'; terminal = 'WSL'; confidence = 'medium'; reasons = @("新建 Web/Python 项目默认推荐 Linux-native 工具链与 WSL 的 $WslProjects。") }
     }
     $isWslUnc = $ProjectPath -match '^\\\\wsl\$\\'
     $exists = Test-Path -LiteralPath $ProjectPath
@@ -482,6 +485,7 @@ function Get-ProjectRecommendation {
 function Get-WslToolchainInfo {
     param(
         [AllowNull()]$WslInfo,
+        [AllowNull()]$Config,
         [switch]$Skip
     )
     if ($Skip) {
@@ -489,6 +493,7 @@ function Get-WslToolchainInfo {
         return [pscustomobject]@{
             available=$false; distro=$distro; tools=[pscustomobject]@{}; packages=[pscustomobject]@{}
             aptPackagesMissing=@(); codeRootExists=$null; managedBlockPresent=$null; managedBlockSharesCodexHome=$null; sudoAvailable=$null
+            githubAuthStatus=$null; configuredPackageGroups=@()
             error=$null; skipped=$true; reason='快速检测未启动 WSL 发行版。'
         }
     }
@@ -496,10 +501,14 @@ function Get-WslToolchainInfo {
         return [pscustomobject]@{
             available=$false; distro=$null; tools=[pscustomobject]@{}; packages=[pscustomobject]@{}
             aptPackagesMissing=@(); codeRootExists=$null; managedBlockPresent=$null; managedBlockSharesCodexHome=$null; sudoAvailable=$null
+            githubAuthStatus=$null; configuredPackageGroups=@()
             error=$null; skipped=$false; reason='没有可用的 WSL2 Ubuntu。'
         }
     }
+    if ($null -eq $Config) { throw '完整 WSL 检测需要 wslEnvironment 配置。' }
+    $packageConfiguration = Get-WslPackageConfiguration -Config $Config
     $distro = $WslInfo.ubuntuName
+    $codeRoot = Resolve-WslUserPath -Distro $distro -Path ([string]$Config.paths.wslProjects)
     # Keep this in sync with wsl/setup.sh. The additional package and shell
     # state means planning can omit work that a WSL environment already has,
     # rather than treating every full detection as a request to rerun apt.
@@ -539,15 +548,34 @@ report_tool() {
   fi
 }
 
-for tool in git gh node npm python3 uv fnm jq rg fd fdfind; do
+for tool in "$@"; do
   report_tool "$tool"
 done
+
+if command -v gh >/dev/null 2>&1; then
+  gh_path="$(command -v gh)"
+  case "$gh_path" in
+    /mnt/[a-zA-Z]/*) printf 'state:ghAuth=windows-path\n' ;;
+    *)
+      if gh auth status >/dev/null 2>&1; then
+        printf 'state:ghAuth=authenticated\n'
+      else
+        printf 'state:ghAuth=unauthenticated\n'
+      fi
+      ;;
+  esac
+else
+  printf 'state:ghAuth=missing\n'
+fi
 '@
 
     $stateScriptText = @'
-for package in git curl ca-certificates build-essential unzip zip jq ripgrep fd-find; do
+code_root="$1"
+shift
+for package in "$@"; do
   if dpkg-query -W -f='${db:Status-Status}' "$package" 2>/dev/null | grep -qx installed; then
-    printf 'package:%s=installed\n' "$package"
+    version="$(dpkg-query -W -f='${Version}' "$package" 2>/dev/null || true)"
+    printf 'package:%s=installed|%s\n' "$package" "$version"
   else
     printf 'package:%s=missing\n' "$package"
   fi
@@ -558,7 +586,7 @@ if command -v sudo >/dev/null 2>&1; then
 else
   printf 'state:sudo=missing\n'
 fi
-if [[ -d "$HOME/code" ]]; then
+if [[ -d "$code_root" ]]; then
   printf 'state:codeRoot=present\n'
 else
   printf 'state:codeRoot=missing\n'
@@ -584,12 +612,14 @@ fi
     # The latter can consume Bash variable references such as "$t" while
     # reconstructing the Linux command line. Linux process output is UTF-8,
     # unlike wsl.exe's own --version/--list output which is UTF-16.
-    $toolResult = Invoke-CapturedCommand -Command 'wsl.exe' -Arguments @('-d', $distro, '--', 'bash', '-s') `
+    $toolArguments = @('-d', $distro, '--', 'bash', '-s', '--') + @($packageConfiguration.commandNames)
+    $toolResult = Invoke-CapturedCommand -Command 'wsl.exe' -Arguments $toolArguments `
         -StandardInput $toolScriptText -TimeoutSeconds 30 -OutputEncoding ([Text.Encoding]::UTF8)
     # Keep the package and shell-state probe separate from executable version
     # probes. A broken Windows shim inherited through PATH must not prevent us
     # from learning whether apt or sudo is actually needed.
-    $stateResult = Invoke-CapturedCommand -Command 'wsl.exe' -Arguments @('-d', $distro, '--', 'bash', '-s') `
+    $stateArguments = @('-d', $distro, '--', 'bash', '-s', '--', $codeRoot) + @($packageConfiguration.packageNames)
+    $stateResult = Invoke-CapturedCommand -Command 'wsl.exe' -Arguments $stateArguments `
         -StandardInput $stateScriptText -TimeoutSeconds 30 -OutputEncoding ([Text.Encoding]::UTF8)
     $toolValues = [ordered]@{}
     $packageValues = [ordered]@{}
@@ -599,13 +629,22 @@ fi
             $toolValues[$matches[1]] = $matches[2]
         }
         elseif ($line -match '^package:([^=]+)=(.*)$') {
-            $packageValues[$matches[1]] = $matches[2]
+            $packageName = $matches[1]
+            $packageResult = $matches[2]
+            if ($packageResult -match '^installed\|(.*)$') {
+                $packageValues[$packageName] = [pscustomobject]@{ status='installed'; version=$matches[1] }
+            }
+            else {
+                $packageValues[$packageName] = [pscustomobject]@{ status=$packageResult; version=$null }
+            }
         }
         elseif ($line -match '^state:([^=]+)=(.*)$') {
             $stateValues[$matches[1]] = $matches[2]
         }
     }
-    $aptPackagesMissing = @($packageValues.GetEnumerator() | Where-Object Value -ne 'installed' | ForEach-Object Key)
+    $aptPackagesMissing = @($packageConfiguration.packageNames | Where-Object {
+        -not $packageValues.Contains($_) -or $packageValues[$_].status -ne 'installed'
+    })
     return [pscustomobject]@{
         available=($toolResult.exitCode -eq 0 -and $stateResult.exitCode -eq 0)
         distro=$distro
@@ -616,6 +655,8 @@ fi
         managedBlockPresent=($stateValues['managedShellBlock'] -eq 'present')
         managedBlockSharesCodexHome=$(if ($stateValues['managedBlockSharesCodexHome'] -eq 'not-managed') { $null } else { $stateValues['managedBlockSharesCodexHome'] -eq 'present' })
         sudoAvailable=($stateValues['sudo'] -eq 'available')
+        githubAuthStatus=$(if ($stateValues.Contains('ghAuth')) { $stateValues['ghAuth'] } else { 'unknown' })
+        configuredPackageGroups=@($packageConfiguration.groups)
         error=@($toolResult.error, $stateResult.error | Where-Object { $_ }) -join '; '
         skipped=$false
         reason=$null
@@ -626,7 +667,8 @@ function Get-CodexSetupDetection {
     [CmdletBinding()]
     param(
         [AllowNull()][string]$ProjectPath,
-        [switch]$DeepWsl
+        [switch]$DeepWsl,
+        [Parameter(Mandatory)]$Config
     )
 
     $issues = [System.Collections.Generic.List[object]]::new()
@@ -744,18 +786,22 @@ function Get-CodexSetupDetection {
 
     if ($DeepWsl) {
         $wslTools = Invoke-DetectionStage -Index 5 -Name '检测 WSL 工具链（可能需要 5–10 秒）' -Issues $issues -Operation {
-            Get-WslToolchainInfo -WslInfo $wsl
+            Get-WslToolchainInfo -WslInfo $wsl -Config $Config
         } -Fallback {
             param($message)
             [pscustomobject]@{
                 available=$false; distro=$wsl.ubuntuName; tools=[pscustomobject]@{}; packages=[pscustomobject]@{}
                 aptPackagesMissing=@(); codeRootExists=$null; managedBlockPresent=$null; managedBlockSharesCodexHome=$null; sudoAvailable=$null
+                githubAuthStatus=$null; configuredPackageGroups=@()
                 error=$message; skipped=$false; reason='WSL 工具链检测失败。'
             }
         } -ResultSummary {
             param($value)
             if (-not $value.available) { return $value.reason }
-            $requiredToolNames = @('git', 'node', 'npm', 'python3', 'uv', 'fnm', 'jq', 'rg', 'fd')
+            $requiredToolNames = @(
+                if ($Config.toolchains.node.enabled) { 'node'; 'npm'; 'fnm' }
+                if ($Config.toolchains.python.enabled) { 'python3'; 'uv' }
+            )
             $missingToolNames = @($requiredToolNames | Where-Object {
                 $property = $value.tools.PSObject.Properties[$_]
                 $null -eq $property -or [string]$property.Value -in @('missing', 'windows-path', 'unavailable', '')
@@ -768,19 +814,26 @@ function Get-CodexSetupDetection {
                 "主要 Linux 工具 $availableToolCount/$($requiredToolNames.Count) 可用；未检测到 $($missingToolNames -join '、')"
             }
             $missingPackageCount = @($value.aptPackagesMissing).Count
-            $packageText = if ($missingPackageCount -eq 0) { '基础软件齐全' } else { "还需准备 $missingPackageCount 个基础软件包" }
-            "$($value.distro) 可访问；$toolText；$packageText"
+            $packageText = if ($missingPackageCount -eq 0) { '已启用的软件包组齐全' } else { "还需准备 $missingPackageCount 个已配置软件包" }
+            $authText = switch ([string]$value.githubAuthStatus) {
+                'authenticated' { 'Linux gh 已登录' }
+                'unauthenticated' { 'Linux gh 尚未登录' }
+                'missing' { 'Linux gh 尚未安装' }
+                'windows-path' { '仅发现 Windows gh' }
+                default { 'Linux gh 登录状态未知' }
+            }
+            "$($value.distro) 可访问；$toolText；$packageText；$authText"
         }
     }
     else {
         Write-Host '[5/6] 跳过 WSL 工具链（可从菜单运行完整检测）' -ForegroundColor DarkGray
         Write-Host '      未启动 WSL/Linux；不影响本次快速检查。' -ForegroundColor DarkGray
         Write-SetupLog -Level Debug -Message '快速检测跳过 WSL 工具链'
-        $wslTools = Get-WslToolchainInfo -WslInfo $wsl -Skip
+        $wslTools = Get-WslToolchainInfo -WslInfo $wsl -Config $Config -Skip
     }
 
     $project = Invoke-DetectionStage -Index 6 -Name '生成项目建议与健康摘要' -Issues $issues -Operation {
-        Get-ProjectRecommendation -ProjectPath $ProjectPath
+        Get-ProjectRecommendation -ProjectPath $ProjectPath -WslProjects $Config.paths.wslProjects
     } -Fallback {
         param($message)
         [pscustomobject]@{ path=$ProjectPath; exists=$false; agent='WSL'; terminal='WSL'; confidence='low'; reasons=@("项目建议检测失败：$message") }

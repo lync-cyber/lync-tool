@@ -145,6 +145,7 @@ function Get-CodexSetupPlan {
             -Parameters @{ distro=$Detection.wsl.ubuntuName }
     }
     else {
+        $wslPackageConfiguration = Get-WslPackageConfiguration -Config $Config
         $wslTools = Get-PlanningProperty $Detection 'wslTools'
         $wslDetailsKnown = $null -ne $wslTools -and
             [bool](Get-PlanningProperty $wslTools 'available' $false) -and
@@ -166,16 +167,22 @@ function Get-CodexSetupPlan {
                 (Get-PlanningProperty $wslToolStates 'uv' 'missing') -in $unavailableWslToolStates -or
                 (Get-PlanningProperty $wslToolStates 'python3' 'missing') -in $unavailableWslToolStates
             )
-            $codeRootKnown = $Config.paths.wslProjects -eq '~/code'
-            $needsCodeRoot = -not $codeRootKnown -or -not [bool](Get-PlanningProperty $wslTools 'codeRootExists' $false)
+            $needsCodeRoot = -not [bool](Get-PlanningProperty $wslTools 'codeRootExists' $false)
             $managedBlockPresent = [bool](Get-PlanningProperty $wslTools 'managedBlockPresent' $false)
             $managedBlockSharesCodexHome = Get-PlanningProperty $wslTools 'managedBlockSharesCodexHome'
             $desiredCodexHomeSharing = [bool]$Config.codex.shareWindowsHomeToWsl
             $needsShellBlock = -not $managedBlockPresent -or $null -eq $managedBlockSharesCodexHome -or [bool]$managedBlockSharesCodexHome -ne $desiredCodexHomeSharing
-            $needsFdCommand = (Get-PlanningProperty $wslToolStates 'fd' 'missing') -in $unavailableWslToolStates
+            $missingAliases = @($wslPackageConfiguration.aliases | Where-Object {
+                (Get-PlanningProperty $wslToolStates $_.name 'missing') -in $unavailableWslToolStates
+            })
 
-            if ($missingAptPackages.Count -gt 0) { $wslNeedLabels += "$($missingAptPackages.Count) 个 Linux 基础工具" }
-            if ($needsFdCommand) { $wslNeedLabels += 'fd 文件查找命令' }
+            if ($missingAptPackages.Count -gt 0) {
+                $missingGroupLabels = @($wslPackageConfiguration.groups | Where-Object {
+                    @($_.packages | Where-Object { $_ -in $missingAptPackages }).Count -gt 0
+                } | ForEach-Object label)
+                $wslNeedLabels += "$($missingAptPackages.Count) 个软件包（$($missingGroupLabels -join '、')）"
+            }
+            if ($missingAliases.Count -gt 0) { $wslNeedLabels += "$($missingAliases.Count) 个兼容命令入口" }
             if ($needsCodeRoot) { $wslNeedLabels += '代码文件夹' }
             if ($needsShellBlock) { $wslNeedLabels += '终端启动设置' }
             if ($installNodeInWsl) { $wslNeedLabels += 'Node.js' }

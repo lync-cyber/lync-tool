@@ -53,7 +53,13 @@ try {
         windowsTerminal=[pscustomobject]@{ command=$available; app=[pscustomobject]@{ installed=$true; error=$null; packages=@() } }
         powershell7=$available; git=$available; githubCli=$available; node=$available; fnm=$available; python=$available; pythonLauncher=$available; uv=$available
         wsl=[pscustomobject]@{ installed=$true; ubuntuWsl2=$true; ubuntuName='Ubuntu'; error=$null }
-        wslTools=[pscustomobject]@{ skipped=$true; reason='test' }
+        wslTools=[pscustomobject]@{
+            skipped=$false; available=$true; error=$null; reason=$null; distro='Ubuntu-Test'
+            githubAuthStatus='authenticated'
+            configuredPackageGroups=@([pscustomobject]@{ label='Linux 基础工具' })
+            packages=[pscustomobject]@{ gh=[pscustomobject]@{ status='installed'; version='2.45.0-1ubuntu0.3' } }
+            tools=[pscustomobject]@{ gh='gh version 2.45.0'; git='git version 2.43.0' }
+        }
         windowsSandboxFeature=[pscustomobject]@{ state='Disabled'; error=$null }
         path=[pscustomobject]@{ conflicts=@(); shadowedTools=@(); duplicateEntrypoints=@(); appAliases=@(); duplicates=@(); missing=@() }
         issues=@()
@@ -67,11 +73,13 @@ try {
     Assert-True ($report -match '仍可继续设置' -and $report -match '创建 Codex Terminal 配置') 'report shows only remaining settings after verification'
     Assert-True ($report -match '本次快速复核') 'report records the post-apply verification'
     Assert-True ($report -match '已安装 2\.50\.1；检测到待更新版本 2\.51\.0；本次未安装') 'report preserves installed and available versions from update checks'
+    Assert-True ($report -match 'GitHub 登录（WSL/Linux）：已登录' -and $report -match 'gh version 2\.45\.0' -and $report -match 'APT gh：2\.45\.0-1ubuntu0\.3') 'report shows Linux gh package, command version, and authentication status'
     Assert-True ($report -match '验证并开始使用' -and $report -match '先查看上方标记为“未完成”的项目') 'report gives recovery steps when setup is incomplete'
 
     $startScript = Get-Content -LiteralPath (Join-Path $root 'Start-CodexSetup.ps1') -Raw -Encoding utf8
     Assert-True ($startScript -match '(?s)\$remainingActions\s*=\s*@\(\s*if \(\$null -ne \$remainingPlan\)') 'completion page preserves an array when exactly one action remains'
-    Assert-True ($startScript -match "接下来" -and $startScript -match '三条命令都显示版本号' -and $startScript -match 'gh auth status') 'successful completion page explains how to verify and start using the environment'
+    Assert-True ($startScript -match "接下来" -and $startScript -match '上述命令都显示版本号' -and $startScript -match 'gh --version' -and $startScript -match 'gh auth status') 'successful completion page explains how to verify and start using the environment'
+    Assert-True ($startScript -match '\$Config' -and $startScript -match '\$windowsProjects' -and $startScript -match '\$wslProjects') 'completion page uses configured project paths'
     Assert-True ($startScript -match '本次有项目未执行；当前环境可能尚未完整准备') 'skipped actions do not receive an all-success getting-started message'
     Assert-True ($startScript -match '\$_\.id -in \$originalActionIds') 'quick verification cannot invent actions outside the original full-detection plan'
 }

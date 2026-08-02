@@ -61,7 +61,8 @@ Assert-True ($actionsText -match '更新检查摘要') '软件更新检查后应
 Assert-True ($actionsText -match '已安装.*检测到待更新版本' -and $actionsText -match 'installedVersion') '安装与更新结果应记录具体版本。'
 Assert-True ($actionsText -match 'fallbackVersion -match' -and $actionsText -match 'fallbackVersion = \$matches\[0\]') '命令探测到的备用版本应去掉构建哈希等冗余文本。'
 Assert-True ($actionsText -match "preflightArguments -Quiet") 'WSL 网络预检应静默执行，避免重复显示预览和完成摘要。'
+Assert-True ($actionsText -match 'Resolve-WslUserPath') 'WSL 项目目录应通过公共配置路径解析，避免 PowerShell 展开波浪号。'
 Assert-True ($actionsText -match 'Resolve-SetupCommandPath' -and $actionsText -match 'Schniz\.fnm') '新安装的便携工具应复用公共定位逻辑立即找到。'
 Assert-True ($actionsText -match 'Get-WingetInstalledPackage' -and $actionsText -match '为避免误卸载') '只有确认由本次新增的软件包才应登记为可回滚安装。'
 
-Write-Host '动作流程检查通过：23 项' -ForegroundColor Green
+Write-Host '动作流程检查通过：24 项' -ForegroundColor Green

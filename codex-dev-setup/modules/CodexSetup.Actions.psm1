@@ -714,7 +714,16 @@ function Invoke-WslSetup {
     $helper = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\wsl\setup.sh'))
     $helperWsl = Convert-WindowsPathToWsl $helper
     $codexHomeWsl = Convert-WindowsPathToWsl (Join-Path $env:USERPROFILE '.codex')
-    $arguments = @('-d', $Action.parameters.distro, '--', 'bash', $helperWsl, '--apply', '--code-root', $Config.paths.wslProjects)
+    $distro = [string]$Action.parameters.distro
+    $codeRoot = Resolve-WslUserPath -Distro $distro -Path ([string]$Config.paths.wslProjects)
+    $arguments = @('-d', $distro, '--', 'bash', $helperWsl, '--apply', '--code-root', $codeRoot)
+    $wslPackageConfiguration = Get-WslPackageConfiguration -Config $Config
+    foreach ($packageName in @($wslPackageConfiguration.packageNames)) {
+        $arguments += @('--apt-package', [string]$packageName)
+    }
+    foreach ($alias in @($wslPackageConfiguration.aliases)) {
+        $arguments += @('--command-alias', "$($alias.name)=$($alias.target)")
+    }
     if ($Action.parameters.shareCodexHome) { $arguments += @('--share-codex-home', $codexHomeWsl) }
     $installNode = if ($Action.parameters.PSObject.Properties.Name -contains 'installNode') {
         [bool]$Action.parameters.installNode
@@ -735,7 +744,15 @@ function Invoke-WslSetup {
     # PowerShell (especially into Out-Null) hides stdout after sudo succeeds and
     # makes a healthy apt run look frozen to the user.
     Invoke-InteractiveExternalSetupCommand -Command 'wsl.exe' -Arguments $arguments | Out-Null
-    Add-RollbackNote 'WSL 内 apt/fnm/uv 安装不会由 Windows 回滚自动卸载；.bashrc 变更可用 wsl/setup.sh --rollback 删除。'
+    Add-RollbackNote 'WSL 内已配置的 APT 软件包及 fnm/uv 安装不会由 Windows 回滚自动卸载；.bashrc 变更可用 wsl/setup.sh --rollback 删除。'
+    $ghProbeScript = 'gh_path="$(command -v gh 2>/dev/null || true)"; case "$gh_path" in ""|/mnt/[a-zA-Z]/*) exit 0;; esac; version="$(gh --version 2>/dev/null | head -n 1)"; printf "ghVersion=%s\n" "$version"; if gh auth status >/dev/null 2>&1; then printf "ghAuth=authenticated\n"; else printf "ghAuth=unauthenticated\n"; fi'
+    $ghProbeOutput = @(& wsl.exe -d $distro -- bash -lc $ghProbeScript 2>&1 | ForEach-Object { [string]$_ })
+    $ghVersion = @($ghProbeOutput | Where-Object { $_ -match '^ghVersion=(.*)$' } | ForEach-Object { $_ -replace '^ghVersion=', '' } | Select-Object -First 1)
+    $ghAuth = @($ghProbeOutput | Where-Object { $_ -match '^ghAuth=(.*)$' } | ForEach-Object { $_ -replace '^ghAuth=', '' } | Select-Object -First 1)
+    if ($ghVersion.Count -gt 0) {
+        $authText = if ($ghAuth.Count -gt 0 -and $ghAuth[0] -eq 'authenticated') { '已登录' } else { '未登录；需要时运行 gh auth login' }
+        return [pscustomobject]@{ summary="Linux $($ghVersion[0])；GitHub $authText"; githubVersion=$ghVersion[0]; githubAuthStatus=$(if ($ghAuth.Count -gt 0) { $ghAuth[0] } else { 'unknown' }) }
+    }
 }
 
 function New-ProjectTemplateMap {

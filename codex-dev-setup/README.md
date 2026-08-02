@@ -52,7 +52,7 @@ Set-Location <解压目录>
 ## 检测模式与完成页
 
 - 菜单 `[1]` 是快速检测：显示 6 个检测阶段和耗时，但不启动 WSL 发行版。
-- 菜单 `[7]` 是完整检测：额外检查 WSL 内的 Git、Node、Python、uv、fnm 和 Codex。
+- 菜单 `[7]` 是完整检测：额外检查 WSL 内已配置的 APT 软件包、GitHub CLI 登录状态、Node、Python、uv、fnm 和 Codex。
 - 同一项目的检测结果在当前菜单会话内缓存 5 分钟；完整结果也可满足后续快速请求。菜单 `[R]` 可强制刷新。
 - 真实应用始终使用完整检测，写入完成后会清空缓存。
 - 完成页汇总健康状态、缺失工具、检测异常和真实 PATH 冲突，并可打开报告、打开目录或复制路径。
@@ -64,7 +64,7 @@ Set-Location <解压目录>
 - 检测 `%USERPROFILE%\.wslconfig`、Windows 系统代理和常见 localhost 代理端口；真实应用时可选配置 mirrored networking 与 v2rayN 持久代理。
 - 扫描项目标记，为 Windows 专属 .NET/PowerShell 项目建议 Windows native Agent，为 Web/Python/跨平台项目建议 WSL Agent，并自动匹配 PowerShell 7 或 WSL terminal。
 - 用 WinGet 生成安装/更新检查计划，真实应用时按功能模块确认。
-- 配置 Git 的非秘密基础选项；GitHub CLI 与 SSH 只显示官方交互命令。
+- 配置 Git 的非秘密基础选项；Windows 与 WSL/Linux 分别准备原生 GitHub CLI，登录和 SSH 只显示官方交互命令。
 - 为 Node.js 推荐 fnm + 当前 LTS，为 Python 推荐 uv + 项目级 Python 版本与虚拟环境。
 - 以幂等方式写入 Codex 用户级 `config.toml`、PowerShell profile、Windows Terminal JSON fragment 和 WSL `.bashrc` 管理区块。
 - 生成 `AGENTS.md`、`.codex/config.toml`、`.editorconfig`、`.gitattributes`、`.gitignore`。
@@ -77,6 +77,35 @@ Set-Location <解压目录>
 对确实需要完全访问的可信个人项目，可在 `config/defaults.json` 中显式改用 `sandboxMode = "danger-full-access"`，并按需启用 `shareWindowsHomeToWsl` 或 `windowsSandbox = "elevated"`。Windows elevated sandbox 与 Windows 的“Windows Sandbox”可选功能不是同一个机制。
 
 脚本不会读取或记录 API Key、访问令牌、SSH 私钥、浏览器凭据或 `.env`；不会自动迁移已有仓库；不会绕过 UAC、企业策略或安全软件；第一版不管理 MCP、插件和技能。
+
+## WSL 软件包统一配置
+
+WSL 软件包只在配置文件的 `wslEnvironment` 中定义；仓库默认值位于 `config/defaults.json`，也可通过 `-ConfigPath` 使用导出的自定义配置。PowerShell 检测、计划和执行阶段共用这一入口；`wsl/setup.sh` 不保存另一份软件清单，只接收经过校验的 `--apt-package` 与 `--command-alias` 参数。
+
+默认启用的 `base` 组包含 Git、curl、构建基础工具、jq、ripgrep、fd 和 Linux 原生 `gh`。`shell-quality` 组包含 ShellCheck 与 shfmt，默认关闭。可先从首页导出完整配置，再把该组的 `enabled` 改为 `true`；以下为对应片段：
+
+```json
+{
+  "wslEnvironment": {
+    "packageGroups": [
+      {
+        "id": "shell-quality",
+        "label": "Shell 开发质量工具（可选）",
+        "enabled": true,
+        "required": false,
+        "packages": [
+          { "name": "shellcheck", "commands": ["shellcheck"] },
+          { "name": "shfmt", "commands": ["shfmt"] }
+        ]
+      }
+    ]
+  }
+}
+```
+
+新增软件同样只需加入一个包组。`name` 必须是合法 Debian 包名；`commands` 用于完整检测和版本报告；`aliases` 可声明类似 `fd → fdfind` 的用户级兼容入口。包名、命令和别名会在 PowerShell 与 Bash 两侧校验。重复运行只安装当前启用组中仍缺少的软件包。
+
+Linux `gh` 安装后只执行不显示令牌的 `gh auth status`。工具不会自动登录、复制 Windows 凭据、读取 token 或修改 Git remote；未登录时报告会提示手动运行 `gh auth login`。
 
 ## WSL mirrored 网络与 v2rayN
 
@@ -124,7 +153,7 @@ Codex Desktop 的 Linux setup script 是项目/工作树级补充：官方文档
     └── backups\
 ```
 
-回滚会恢复本次修改前备份的文件，并可选择卸载本次由 WinGet 安装的软件。为了避免数据丢失，它不会自动注销 Ubuntu、把 WSL2 降回 WSL1、删除登录状态或强行卸载 WSL 内的 apt/fnm/uv 包；报告会列出这些人工复核项。
+回滚会恢复本次修改前备份的文件，并可选择卸载本次由 WinGet 安装的软件。为了避免数据丢失，它不会自动注销 Ubuntu、把 WSL2 降回 WSL1、删除登录状态或强行卸载 WSL 内已配置的 APT/fnm/uv 包；报告会列出这些人工复核项。
 
 ## 目录
 

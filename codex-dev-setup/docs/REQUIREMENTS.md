@@ -19,6 +19,7 @@
 - 主要项目类型是 Node.js 前端与 Python；当前仓库多在 Windows 用户目录。
 - 新项目按类型建议：Windows 专属项目留在 Windows 文件系统；Web/Python/跨平台项目放 WSL `~/code`。
 - 完整检测并配置 WSL2 Ubuntu，提供可重复 Bash helper；不迁移已有仓库。
+- WSL APT 软件通过统一的可扩展包组配置定义；默认包含 Linux 原生 gh，可选 ShellCheck/shfmt，不在 Bash、检测和计划模块重复维护清单。
 - 可选配置 WSL mirrored networking；检测 Windows 系统代理与 loopback 端口，不自动开启 v2rayN LAN 监听或创建 LAN 入站规则。
 - 可选把代理环境持久写入 WSL 用户级 `~/.config/codex/proxy.sh`，并从 `~/.profile`、`~/.bashrc` 加载，使 Codex 独立启动的 WSL 进程可继承。
 - 检测 Windows/WSL Git、Node、Python、依赖目录、`/mnt/c` 高 I/O 和 PATH 冲突等混用风险。
@@ -26,7 +27,7 @@
 ## Git、终端与工具
 
 - GitHub 为主要服务，当前认证方式混用。
-- 安装并配置 Windows 原生 Git、GitHub CLI 和 SSH 指引，但不读取/保存令牌或私钥。
+- 安装 Windows 与 WSL/Linux 各自原生的 GitHub CLI；检测版本和登录状态，但不自动登录、复制凭据、修改 remote 或读取/保存令牌与私钥。
 - Windows Terminal 支持 PowerShell 7 和 WSL profiles；使用 JSON fragment，避免覆盖用户 settings.json。
 - WinGet 安装计划按开发栈生成，逐模块确认；包括 PowerShell 7、Terminal、Git、gh、ripgrep、fd、jq、fnm、uv 和 Desktop。
 

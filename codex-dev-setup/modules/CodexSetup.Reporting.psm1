@@ -181,6 +181,26 @@ function New-CodexSetupReport {
     else {
         $toolDetails = Get-ReportProperty $wslTools 'tools'
         $lines.Add("- 发行版：$(Get-ReportProperty $wslTools 'distro' '未知')")
+        $configuredGroups = @(Get-ReportProperty $wslTools 'configuredPackageGroups' @())
+        if ($configuredGroups.Count -gt 0) {
+            $lines.Add("- 已启用软件包组：$(@($configuredGroups | ForEach-Object label) -join '、')")
+        }
+        $githubAuthText = switch ([string](Get-ReportProperty $wslTools 'githubAuthStatus' 'unknown')) {
+            'authenticated' { '已登录' }
+            'unauthenticated' { '未登录；需要时运行 `gh auth login`' }
+            'missing' { '未检测到 Linux 版 gh' }
+            'windows-path' { '仅发现 Windows gh；Linux 登录状态未检测' }
+            default { '暂时无法确认' }
+        }
+        $lines.Add("- GitHub 登录（WSL/Linux）：$githubAuthText")
+        $packageDetails = Get-ReportProperty $wslTools 'packages' ([pscustomobject]@{})
+        foreach ($property in @($packageDetails.PSObject.Properties)) {
+            $packageState = $property.Value
+            $status = [string](Get-ReportProperty $packageState 'status' 'unknown')
+            $version = [string](Get-ReportProperty $packageState 'version' '')
+            $packageText = if ($status -eq 'installed' -and $version) { $version } elseif ($status -eq 'installed') { '已安装；版本未知' } else { '未安装' }
+            $lines.Add("- APT $($property.Name)：$packageText")
+        }
         foreach ($property in @($toolDetails.PSObject.Properties)) {
             $value = switch ([string]$property.Value) {
                 'missing' { '未安装' }
@@ -266,10 +286,10 @@ function New-CodexSetupReport {
         }
         else {
             $lines.Add('2. 在 Codex Desktop Settings 中选择 **WSL/Linux** 工作方式和 **WSL/Linux 终端**。')
-            $lines.Add('3. 打开 Windows Terminal 的 **Codex WSL (Ubuntu)**，运行 `git --version`、`node --version`、`python3 --version`。')
+            $lines.Add('3. 打开 Windows Terminal 的 **Codex WSL (Ubuntu)**，运行 `git --version`、`gh --version`、`node --version`、`python3 --version`。')
             $lines.Add("4. 在 Linux 的 $($Config.paths.wslProjects) 文件夹中新建或打开项目，然后交给 Codex。")
         }
-        $lines.Add('5. 三条命令都显示版本号，即表示主要开发环境可用。')
+        $lines.Add('5. 上述命令都显示版本号，即表示主要开发环境可用。')
         $lines.Add('6. 如需使用 GitHub，运行 `gh auth status`；尚未登录时运行 `gh auth login`。')
     }
     if ($Plan.warnings.Count -gt 0) {

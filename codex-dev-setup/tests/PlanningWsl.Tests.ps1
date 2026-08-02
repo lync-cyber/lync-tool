@@ -23,9 +23,9 @@ function New-ReadyDetection {
         wsl=[pscustomobject]@{ installed=$true; ubuntu=$true; ubuntuWsl2=$true; ubuntuName='Ubuntu-Test'; error=$null }
         wslNetwork=[pscustomobject]@{ networkingMode='nat'; mirroredConfigured=$false; loopbackListeners=@(); recommendedHttpPort=10808; recommendedSocksPort=10808; error=$null }
         wslTools=[pscustomobject]@{
-            available=$true; skipped=$false; error=$null; aptPackagesMissing=@()
+            available=$true; skipped=$false; error=$null; aptPackagesMissing=@(); githubAuthStatus='authenticated'; configuredPackageGroups=@()
             codeRootExists=$true; managedBlockPresent=$true; managedBlockSharesCodexHome=$false; sudoAvailable=$true
-            tools=[pscustomobject]@{ fnm='fnm 1'; node='v24'; uv='uv 1'; python3='Python 3'; fd='fd 10' }
+            tools=[pscustomobject]@{ fnm='fnm 1'; node='v24'; npm='10'; uv='uv 1'; python3='Python 3'; fd='fd 10'; gh='gh version 2' }
         }
         project=[pscustomobject]@{ agent='WSL'; terminal='WSL'; reasons=@('test') }
         healthScore=100; healthLabel='状态良好'; detectionMode='完整'; issues=@()
@@ -56,6 +56,14 @@ $noSudoPlan = Get-CodexSetupPlan -Detection $noSudoDetection -Config $config
 Assert-True (@($noSudoPlan.actions | Where-Object id -eq 'ConfigureWsl').Count -eq 0) '缺少 sudo 且需要系统包时，不应进入注定失败的 WSL 设置。'
 Assert-True (@($noSudoPlan.warnings | Where-Object { $_ -match '避免留下只完成一部分' }).Count -eq 1) '缺少 sudo 时应解释为何暂不执行。'
 
+$shellConfig = $config | ConvertTo-Json -Depth 30 | ConvertFrom-Json
+@($shellConfig.wslEnvironment.packageGroups | Where-Object id -eq 'shell-quality')[0].enabled = $true
+$shellDetection = New-ReadyDetection
+$shellDetection.wslTools.aptPackagesMissing = @('shellcheck', 'shfmt')
+$shellPlan = Get-CodexSetupPlan -Detection $shellDetection -Config $shellConfig
+$shellAction = @($shellPlan.actions | Where-Object id -eq 'ConfigureWsl' | Select-Object -First 1)
+Assert-True ($shellAction.Count -eq 1 -and $shellAction[0].reason -match 'Shell 开发质量工具') '启用可选软件包组后，计划应按配置发现并说明缺失包。'
+
 $networkDetection = New-ReadyDetection
 $config.wslNetworking.configure = $true
 $config.wslNetworking.proxyMode = 'persistent'
@@ -65,4 +73,4 @@ Assert-True ($networkAction.Count -eq 1) '用户明确选择后应生成 WSL 网
 Assert-True ($networkAction[0].reason -match '127\.0\.0\.1' -and $networkAction[0].reason -match '不会开启 v2rayN LAN') '网络计划应解释 mirrored loopback 的安全边界。'
 Assert-True (@($networkPlan.warnings | Where-Object { $_ -match '先启动 v2rayN' }).Count -eq 1) '持久代理计划应提醒 v2rayN 生命周期依赖。'
 
-Write-Host 'WSL 计划检查通过：10 项' -ForegroundColor Green
+Write-Host 'WSL 计划检查通过：11 项' -ForegroundColor Green

@@ -11,8 +11,10 @@ function Assert-True {
 $root = Split-Path -Parent $PSScriptRoot
 $setupPath = Join-Path $root 'wsl\setup.sh'
 $detectionPath = Join-Path $root 'modules\CodexSetup.Detection.psm1'
+$configPath = Join-Path $root 'config\defaults.json'
 $setup = Get-Content -LiteralPath $setupPath -Raw -Encoding utf8
 $detection = Get-Content -LiteralPath $detectionPath -Raw -Encoding utf8
+$config = Get-Content -LiteralPath $configPath -Raw -Encoding utf8
 
 Assert-True ($setup -match 'SUDO_AUTH_FAILURE_EXIT=77') 'WSL 脚本应保留可供 Windows 主流程识别的 sudo 失败退出码。'
 Assert-True ($setup -match 'CODEX_SETUP_SUDO_AUTH_FAILED') 'WSL 脚本应输出稳定的 sudo 失败标记。'
@@ -31,10 +33,11 @@ Assert-True ($setup -match 'export PATH="\$HOME/\.local/bin:\$HOME/\.local/share
 Assert-True ($setup -match '预览完成：以上命令尚未执行') 'WhatIf 不得误报基础工具已经安装。'
 Assert-True ($setup -notmatch 'Done\. Open a new WSL shell') '面向用户的 WSL 完成提示不应遗留英文。'
 Assert-True ($setup -notmatch 'run sudo apt-get update') '不得无条件执行 apt-get update。'
-Assert-True ($setup -match 'if \[\[ "\$\{#missing_base_packages\[@\]\}" -gt 0 \]\]') '只有缺少基础包时才应进入 apt 分支。'
+Assert-True ($setup -match 'if \[\[ "\$\{#missing_apt_packages\[@\]\}" -gt 0 \]\]') '只有缺少已配置软件包时才应进入 apt 分支。'
 Assert-True ($setup -match 'if \[\[ "\$MODE" == "apply" \]\]; then\s+ensure_sudo') '只有实际安装缺少的基础包时才应验证 sudo。'
 Assert-True ($setup -match 'if \[\[ -d "\$CODE_ROOT" \]\]; then') '创建项目目录应与 apt 安装分开处理。'
 Assert-True ($setup -match 'CODE_ROOT="\$HOME/\$\{CODE_ROOT#~/' ) '从 Windows 传入的 ~/code 应在 WSL 内展开为 Linux 主目录。'
+Assert-True ($setup -match 'Missing required argument: --code-root') '常规 WSL 设置必须从统一配置接收项目目录。'
 Assert-True ($setup -match 'cmp -s "\$block_file" <\(extract_managed_block "\$BASHRC"\)') '托管 .bashrc 区块相同时应跳过写入。'
 Assert-True ($setup -match 'block_needs_update=0') '托管 .bashrc 区块相同时应明确标记为无需更新。'
 Assert-True ($setup -match 'WSL 终端快捷设置已符合当前选择') '无需重写 .bashrc 时应给出清楚说明。'
@@ -47,11 +50,17 @@ Assert-True ($setup -match '\.config/codex/proxy\.sh') '持久代理应使用独
 Assert-True ($setup -match 'PROFILE_START_MARKER') '持久代理应同时管理 ~/.profile 加载区块。'
 Assert-True ($setup -match 'proxy_on 127\.0\.0\.1|proxy_on %q') '代理文件应在新 shell 启动时自动启用。'
 Assert-True ($setup -match 'PROXY_HOST.*127\.0\.0\.1') '自动配置必须限制为 mirrored loopback 地址。'
-Assert-True ($setup -match '\.local/bin/fd') 'Ubuntu 的 fd-find 包应提供跨平台一致的 fd 命令入口。'
+Assert-True ($setup -match '--apt-package' -and $setup -match '--command-alias') 'WSL helper 应通过通用重复参数接收软件包和命令别名。'
+Assert-True ($setup -notmatch 'BASE_PACKAGES=') 'WSL helper 不应另存一份硬编码软件包清单。'
+Assert-True ($setup -match 'Invalid APT package name' -and $setup -match 'Invalid command alias') 'WSL helper 应再次校验配置输入。'
+Assert-True ($setup -match 'dpkg-query.*\$\{Version\}') 'WSL 安装日志应显示实际安装的软件包版本。'
+Assert-True ($config -match '"name": "gh"' -and $config -match '"id": "shell-quality"') '统一配置应包含默认 gh 和可选 Shell 质量工具组。'
+Assert-True ($config -match '"name": "fd".*"target": "fdfind"') 'fd 兼容入口应来自统一配置。'
 Assert-True ($detection -match 'windows-path') 'WSL 检测应区分 Linux 原生工具和继承的 Windows PATH 入口。'
 Assert-True ($detection -match 'eval "\$\(fnm env --shell bash\)"') 'WSL 检测应加载已安装的 fnm 环境，避免误报 Node.js 缺失。'
+Assert-True ($detection -match 'gh auth status' -and $detection -notmatch 'gh auth status --show-token') 'WSL 检测只应读取 GitHub 登录状态，不得输出令牌。'
 
-foreach ($field in @('aptPackagesMissing', 'codeRootExists', 'managedBlockPresent', 'managedBlockSharesCodexHome', 'sudoAvailable')) {
+foreach ($field in @('aptPackagesMissing', 'githubAuthStatus', 'configuredPackageGroups', 'codeRootExists', 'managedBlockPresent', 'managedBlockSharesCodexHome', 'sudoAvailable')) {
     Assert-True ($detection -match [regex]::Escape($field)) "完整 WSL 检测应包含 $field 字段。"
 }
 

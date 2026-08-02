@@ -31,6 +31,18 @@ try {
     Assert-True ($config.codex.sandboxMode -eq 'workspace-write' -and $config.codex.windowsSandbox -eq 'unelevated') 'default Codex sandbox is workspace-scoped and unelevated'
     Assert-True (-not $config.codex.shareWindowsHomeToWsl) 'default WSL setup does not share Windows Codex home'
     Assert-True (-not $config.wslNetworking.configure -and $config.wslNetworking.networkingMode -eq 'mirrored') 'WSL network changes are opt-in and mirrored is the recommended target'
+    $wslPackages = Get-WslPackageConfiguration -Config $config
+    Assert-True ('gh' -in $wslPackages.packageNames -and 'shellcheck' -notin $wslPackages.packageNames) 'default WSL package group installs gh but keeps Shell quality tools optional'
+    $shellGroup = @($config.wslEnvironment.packageGroups | Where-Object id -eq 'shell-quality' | Select-Object -First 1)
+    $shellGroup[0].enabled = $true
+    $wslPackagesWithShell = Get-WslPackageConfiguration -Config $config
+    Assert-True ('shellcheck' -in $wslPackagesWithShell.packageNames -and 'shfmt' -in $wslPackagesWithShell.packageNames) 'enabling a WSL package group requires only a configuration change'
+    $shellGroup[0].enabled = $false
+    $invalidPackageConfig = $config | ConvertTo-Json -Depth 30 | ConvertFrom-Json
+    $invalidPackageConfig.wslEnvironment.packageGroups[0].packages[0].name = 'git;echo unsafe'
+    $invalidPackageRejected = $false
+    try { Get-WslPackageConfiguration -Config $invalidPackageConfig | Out-Null } catch { $invalidPackageRejected = $true }
+    Assert-True $invalidPackageRejected 'WSL package configuration rejects unsafe package names'
     $partialConfig = [pscustomobject]@{ wslNetworking=[pscustomobject]@{ configure=$true; httpPort=10900 } }
     Merge-MissingSetupConfig -Target $partialConfig -Defaults $config
     Assert-True ($partialConfig.wslNetworking.httpPort -eq 10900 -and $partialConfig.wslNetworking.proxyHost -eq '127.0.0.1' -and $partialConfig.wslNetworking.firewall) 'partial exported configuration keeps overrides and receives new nested defaults'
@@ -132,13 +144,13 @@ try {
     $webProject = Join-Path $testRoot 'web-project'
     [System.IO.Directory]::CreateDirectory($webProject) | Out-Null
     Set-Content -LiteralPath (Join-Path $webProject 'package.json') -Value '{}' -Encoding utf8
-    $recommendation = Get-ProjectRecommendation -ProjectPath $webProject
+    $recommendation = Get-ProjectRecommendation -ProjectPath $webProject -WslProjects $config.paths.wslProjects
     Assert-True ($recommendation.agent -eq 'WSL') 'web project recommends WSL'
 
     $nativeProject = Join-Path $testRoot 'native-project'
     [System.IO.Directory]::CreateDirectory($nativeProject) | Out-Null
     Set-Content -LiteralPath (Join-Path $nativeProject 'app.csproj') -Value '<Project><PropertyGroup><UseWPF>true</UseWPF></PropertyGroup></Project>' -Encoding utf8
-    $recommendation = Get-ProjectRecommendation -ProjectPath $nativeProject
+    $recommendation = Get-ProjectRecommendation -ProjectPath $nativeProject -WslProjects $config.paths.wslProjects
     Assert-True ($recommendation.agent -eq 'WindowsNative') 'WPF project recommends Windows native'
 
     $redacted = ConvertTo-RedactedText 'token=ghp_abcdefghijklmnopqrstuvwxyz123456 secret=hello'

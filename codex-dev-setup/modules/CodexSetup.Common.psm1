@@ -416,11 +416,109 @@ function Merge-MissingSetupConfig {
     }
 }
 
+function Get-WslPackageConfiguration {
+    param([Parameter(Mandatory)]$Config)
+
+    $environmentProperty = $Config.PSObject.Properties['wslEnvironment']
+    if ($null -eq $environmentProperty -or $null -eq $environmentProperty.Value) {
+        throw '配置缺少 wslEnvironment；请先与当前默认配置合并。'
+    }
+    $environment = $environmentProperty.Value
+    $groupsProperty = $environment.PSObject.Properties['packageGroups']
+    if ($null -eq $groupsProperty) { throw 'wslEnvironment.packageGroups 必须存在。' }
+
+    $enabledGroups = [System.Collections.Generic.List[object]]::new()
+    $packages = [ordered]@{}
+    $commands = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $aliases = [ordered]@{}
+    $groupIds = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($group in @($groupsProperty.Value)) {
+        $id = [string]$group.id
+        if ($id -notmatch '^[a-z0-9][a-z0-9-]*$') { throw "WSL 软件包组 id 无效：$id" }
+        if (-not $groupIds.Add($id)) { throw "WSL 软件包组 id 重复：$id" }
+        if ($group.enabled -isnot [bool] -or $group.required -isnot [bool]) {
+            throw "WSL 软件包组 $id 的 enabled/required 必须是布尔值。"
+        }
+        $label = [string]$group.label
+        if ([string]::IsNullOrWhiteSpace($label)) { throw "WSL 软件包组 $id 缺少 label。" }
+        $groupEnabled = [bool]$group.enabled
+        $groupPackageNames = [System.Collections.Generic.List[string]]::new()
+        foreach ($package in @($group.packages)) {
+            $name = [string]$package.name
+            if ($name -notmatch '^[a-z0-9][a-z0-9+.-]*$') { throw "WSL APT 软件包名称无效：$name" }
+            if ($groupEnabled) {
+                if (-not $packages.Contains($name)) {
+                    $packages[$name] = [pscustomobject]@{ name=$name; groupId=$id; groupLabel=$label; required=[bool]$group.required }
+                }
+                elseif ($group.required) {
+                    $packages[$name].required = $true
+                }
+                [void]$groupPackageNames.Add($name)
+            }
+            $commandsProperty = $package.PSObject.Properties['commands']
+            foreach ($commandValue in @($(if ($null -ne $commandsProperty) { $commandsProperty.Value } else { @() }))) {
+                $command = [string]$commandValue
+                if ($command -notmatch '^[A-Za-z0-9][A-Za-z0-9._+-]*$') { throw "WSL 探测命令名称无效：$command" }
+                if ($groupEnabled) { [void]$commands.Add($command) }
+            }
+            $aliasesProperty = $package.PSObject.Properties['aliases']
+            foreach ($alias in @($(if ($null -ne $aliasesProperty) { $aliasesProperty.Value } else { @() }))) {
+                $aliasName = [string]$alias.name
+                $target = [string]$alias.target
+                if ($aliasName -notmatch '^[A-Za-z0-9][A-Za-z0-9._+-]*$' -or $target -notmatch '^[A-Za-z0-9][A-Za-z0-9._+-]*$') {
+                    throw "WSL 命令别名无效：$aliasName=$target"
+                }
+                if ($groupEnabled) {
+                    if ($aliases.Contains($aliasName) -and $aliases[$aliasName] -ne $target) {
+                        throw "WSL 命令别名目标冲突：$aliasName"
+                    }
+                    $aliases[$aliasName] = $target
+                }
+            }
+        }
+        if ($groupEnabled) {
+            $enabledGroups.Add([pscustomobject]@{
+                id=$id; label=$label; required=[bool]$group.required; packages=@($groupPackageNames)
+            })
+        }
+    }
+    foreach ($commandValue in @($environment.additionalCommandProbes)) {
+        $command = [string]$commandValue
+        if ($command -notmatch '^[A-Za-z0-9][A-Za-z0-9._+-]*$') { throw "WSL 探测命令名称无效：$command" }
+        [void]$commands.Add($command)
+    }
+    return [pscustomobject]@{
+        groups=@($enabledGroups)
+        packages=@($packages.Values)
+        packageNames=@($packages.Keys)
+        commandNames=@($commands | Sort-Object)
+        aliases=@($aliases.GetEnumerator() | ForEach-Object { [pscustomobject]@{ name=$_.Key; target=$_.Value } })
+    }
+}
+
+function Resolve-WslUserPath {
+    param(
+        [Parameter(Mandatory)][string]$Distro,
+        [Parameter(Mandatory)][string]$Path
+    )
+    if ($Path.StartsWith('/')) { return $Path }
+    if ($Path -ne '~' -and -not $Path.StartsWith('~/')) {
+        throw "WSL 路径必须是 ~/... 或 Linux 绝对路径：$Path"
+    }
+    $homeOutput = @(& wsl.exe -d $Distro -- bash -lc 'printf "%s" "$HOME"' 2>&1)
+    if ($LASTEXITCODE -ne 0 -or $homeOutput.Count -eq 0 -or [string]::IsNullOrWhiteSpace([string]$homeOutput[0])) {
+        throw "无法解析 $Distro 的 Linux 主目录。"
+    }
+    $linuxHome = ([string]$homeOutput[0]).Trim().TrimEnd('/')
+    return $(if ($Path -eq '~') { $linuxHome } else { "$linuxHome/$($Path.Substring(2))" })
+}
+
 Export-ModuleMember -Function @(
     'Initialize-SetupRuntime', 'Get-SetupRuntime', 'Write-SetupLog', 'Write-SetupStatus',
     'Read-SetupConfig', 'Export-SetupConfig', 'Confirm-SetupChoice', 'Backup-SetupFile',
     'Set-SetupFileContent', 'Register-InstalledPackage', 'Add-RollbackNote',
     'Complete-SetupRuntime', 'ConvertTo-RedactedText', 'Get-SetupModuleDisplayName',
     'Resolve-SetupModuleChoice', 'Write-SetupWrappedText', 'Get-SetupOrderedModules',
-    'Write-SetupSectionHeader', 'Resolve-SetupCommandPath', 'Merge-MissingSetupConfig'
+    'Write-SetupSectionHeader', 'Resolve-SetupCommandPath', 'Merge-MissingSetupConfig',
+    'Get-WslPackageConfiguration', 'Resolve-WslUserPath'
 )

@@ -29,6 +29,11 @@
 - [fnm official repository](https://github.com/Schniz/fnm)：WinGet ID、PowerShell/Bash shell setup、`--use-on-cd` 与 LTS 管理。
 - [uv installation](https://docs.astral.sh/uv/getting-started/installation/) 与 [Python versions](https://docs.astral.sh/uv/concepts/python-versions/)：WinGet ID、跨平台安装、解释器自动管理、`.python-version` 与项目环境。
 
+## GitHub / Shell
+
+- [GitHub CLI manual](https://cli.github.com/manual/) 与 [Linux installation](https://github.com/cli/cli/blob/trunk/docs/install_linux.md)：Linux 原生 CLI、`gh auth login`、`gh auth status` 与包管理安装方式。
+- [ShellCheck](https://github.com/koalaman/shellcheck) 与 [shfmt](https://github.com/mvdan/sh)：Ubuntu 包安装和 Shell 脚本检查/格式化用途；作为默认关闭的软件包组提供。
+
 ## 避免的过时或不准确写法
 
 - 不支持 WSL1。
