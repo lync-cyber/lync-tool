@@ -130,9 +130,6 @@ function Get-CachedSetupDetection {
         [void]$script:detectionCache.Remove($cacheKey)
     }
 
-    if ($ForceRefresh) {
-        Write-SetupStatus -Kind Info -Message '正在重新检查环境…'
-    }
     $detection = Get-CodexSetupDetection -ProjectPath $TargetProject -DeepWsl:$DeepDetection
     $cacheEntry = [pscustomobject]@{
         createdAt = Get-Date

@@ -25,7 +25,7 @@ try {
         [pscustomobject]@{ id='Fd'; status='Completed'; error=$null },
         [pscustomobject]@{ id='ConfigureWsl'; status='Failed'; error='sudo 验证失败' },
         [pscustomobject]@{ id='TerminalProfiles'; status='Skipped'; error=$null },
-        [pscustomobject]@{ id='CheckGit'; status='Preview'; error=$null; detail=[pscustomobject]@{ summary='未发现可用更新；无需处理' } }
+        [pscustomobject]@{ id='CheckGit'; status='Preview'; error=$null; detail=[pscustomobject]@{ summary='已安装 2.50.1；检测到待更新版本 2.51.0；本次未安装' } }
     )
     $summary = Get-CodexSetupResultSummary -Results $results
     Assert-True ($summary.total -eq 4 -and $summary.completed -eq 1 -and $summary.failed -eq 1 -and $summary.skipped -eq 1 -and $summary.preview -eq 1) 'result summary keeps completed, failed, skipped, and preview separate'
@@ -66,7 +66,7 @@ try {
     Assert-True ($report -match '本次结果：已完成 1 项；未完成 1 项；未执行 1 项；预览 1 项') 'report does not turn a partial run into all completed'
     Assert-True ($report -match '仍可继续设置' -and $report -match '创建 Codex Terminal 配置') 'report shows only remaining settings after verification'
     Assert-True ($report -match '本次快速复核') 'report records the post-apply verification'
-    Assert-True ($report -match '未发现可用更新；无需处理') 'report preserves the concise result of update checks'
+    Assert-True ($report -match '已安装 2\.50\.1；检测到待更新版本 2\.51\.0；本次未安装') 'report preserves installed and available versions from update checks'
     Assert-True ($report -match '验证并开始使用' -and $report -match '先查看上方标记为“未完成”的项目') 'report gives recovery steps when setup is incomplete'
 
     $startScript = Get-Content -LiteralPath (Join-Path $root 'Start-CodexSetup.ps1') -Raw -Encoding utf8

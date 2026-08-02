@@ -104,25 +104,48 @@ function Invoke-WingetReadOnlyQuery {
     return [pscustomobject]@{ exitCode=$exitCode; lines=$commandOutput; text=$outputText }
 }
 
-function Test-WingetPackageInstalled {
+function Get-WingetInstalledPackage {
     param(
         [Parameter(Mandatory)][string]$PackageId,
         [Parameter(Mandatory)][ValidateSet('winget', 'msstore')][string]$Source
     )
     $arguments = @('list', '--id', $PackageId, '--exact', '--source', $Source, '--accept-source-agreements', '--disable-interactivity')
     $query = Invoke-WingetReadOnlyQuery -Arguments $arguments -PackageId $PackageId -Purpose '查询软件是否已经安装'
-    return $query.exitCode -eq 0 -and @($query.lines | ForEach-Object { [string]$_ } | Where-Object {
+    $packageLines = @($query.lines | ForEach-Object { [string]$_ } | Where-Object {
         $_ -match [regex]::Escape($PackageId)
-    }).Count -gt 0
+    })
+    $installed = $query.exitCode -eq 0 -and $packageLines.Count -gt 0
+    $version = if ($installed) { Get-WingetPackageVersionFromLines -Lines $packageLines -PackageId $PackageId } else { $null }
+    return [pscustomobject]@{ installed=$installed; version=$version }
+}
+
+function Get-WingetPackageVersionFromLines {
+    param(
+        [Parameter(Mandatory)][object[]]$Lines,
+        [Parameter(Mandatory)][string]$PackageId,
+        [ValidateSet('Installed', 'Available')][string]$VersionKind = 'Installed'
+    )
+    foreach ($lineObject in $Lines) {
+        $line = [string]$lineObject
+        $idMatch = [regex]::Match($line, '(?<!\S)' + [regex]::Escape($PackageId) + '(?!\S)')
+        if (-not $idMatch.Success) { continue }
+        $tail = $line.Substring($idMatch.Index + $idMatch.Length).Trim()
+        $columns = @($tail -split '\s+' | Where-Object { $_ })
+        if ($VersionKind -eq 'Available' -and $columns.Count -lt 3) { return $null }
+        $versionIndex = if ($VersionKind -eq 'Available') { 1 } else { 0 }
+        if ($columns.Count -gt $versionIndex) { return [string]$columns[$versionIndex] }
+    }
+    return $null
 }
 
 function Install-WingetPackage {
     param([Parameter(Mandatory)]$Action)
     $id = [string]$Action.parameters.packageId
     $source = [string]$Action.parameters.source
-    if (Test-WingetPackageInstalled -PackageId $id -Source $source) {
-        Write-Host '    已检测到现有安装；本次未重复安装，也不会登记为可回滚软件。' -ForegroundColor DarkGray
-        return
+    $existingPackage = Get-WingetInstalledPackage -PackageId $id -Source $source
+    if ($existingPackage.installed) {
+        $versionText = if ($existingPackage.version) { "版本 $($existingPackage.version)；" } else { '' }
+        return [pscustomobject]@{ summary="已存在，${versionText}未重复安装"; installedVersion=$existingPackage.version }
     }
 
     $arguments = @('install', '--id', $id)
@@ -130,50 +153,71 @@ function Install-WingetPackage {
     else { $arguments += @('--exact', '--source', 'winget') }
     $arguments += @('--accept-source-agreements', '--accept-package-agreements')
     Invoke-ExternalSetupCommand -Command 'winget.exe' -Arguments $arguments | Out-Null
-    if (Test-WingetPackageInstalled -PackageId $id -Source $source) {
+    $installedPackage = Get-WingetInstalledPackage -PackageId $id -Source $source
+    if ($installedPackage.installed) {
         Register-InstalledPackage -Id $id -Source $source
     }
     else {
         Add-RollbackNote "WinGet 已返回安装成功，但无法确认软件包 $id 的登记状态；为避免误卸载，未将其加入自动卸载清单。"
     }
+    $installedVersion = $installedPackage.version
+    $summary = if ($installedVersion) { "版本 $installedVersion" } else { '安装完成，暂时无法读取版本' }
+    return [pscustomobject]@{ summary=$summary; installedVersion=$installedVersion }
 }
 
 function Test-WingetPackageUpgrade {
     param([Parameter(Mandatory)]$Action)
     $packageId = [string]$Action.parameters.packageId
-    # `winget upgrade --id ...` performs an upgrade. Use the read-only list
-    # command so the "check only" promise is true in behavior, not just copy.
-    $arguments = @('list', '--id', $packageId, '--exact', '--upgrade-available')
+    $source = [string]$Action.parameters.source
+    $fallbackVersion = if ($Action.parameters.PSObject.Properties.Name -contains 'detectedVersion') {
+        [string]$Action.parameters.detectedVersion
+    }
+    else { $null }
+    if ($fallbackVersion -match '(?i)\bv?\d+(?:\.\d+){1,3}\b') { $fallbackVersion = $matches[0] }
+    # A normal read-only list includes both the installed and available version
+    # when an update exists. One query is enough for the full result.
+    $arguments = @('list', '--id', $packageId, '--exact')
     if ($Action.parameters.source -eq 'winget') { $arguments += @('--source', 'winget') }
     else { $arguments += @('--source', 'msstore') }
     $arguments += @('--accept-source-agreements', '--disable-interactivity')
     $query = Invoke-WingetReadOnlyQuery -Arguments $arguments -PackageId $packageId -Purpose '只读查询软件更新'
     $commandOutput = @($query.lines)
     $exitCode = $query.exitCode
+    $currentVersion = Get-WingetPackageVersionFromLines -Lines $commandOutput -PackageId $packageId
+    if (-not $currentVersion) { $currentVersion = $fallbackVersion }
 
     if ($exitCode -ne 0) {
+        $installedText = if ($currentVersion) { "已安装 $currentVersion；" } else { '' }
         return [pscustomobject]@{
-            updateStatus='Unknown'; summary="暂时无法确认（WinGet 返回 $exitCode）；未执行升级"
-            currentVersion=$null; availableVersion=$null
+            updateStatus='Unknown'; summary="${installedText}暂时无法确认更新（WinGet 返回 $exitCode）；未执行升级"
+            currentVersion=$currentVersion; availableVersion=$null
         }
     }
 
-    $updateLine = @($commandOutput | ForEach-Object { [string]$_ } | Where-Object {
+    $packageLine = @($commandOutput | ForEach-Object { [string]$_ } | Where-Object {
         $_ -match [regex]::Escape($packageId)
     } | Select-Object -First 1)
-    if ($updateLine.Count -eq 0) {
+    if ($packageLine.Count -eq 0 -or -not $currentVersion) {
         return [pscustomobject]@{
-            updateStatus='Current'; summary='未发现可用更新；无需处理'
-            currentVersion=$null; availableVersion=$null
+            updateStatus='Unknown'; summary='暂时无法读取已安装版本；未执行升级'
+            currentVersion=$currentVersion; availableVersion=$null
         }
     }
 
-    $columns = @($updateLine[0].Trim() -split '\s{2,}')
-    $currentVersion = if ($columns.Count -ge 4) { $columns[-3] } else { $null }
-    $availableVersion = if ($columns.Count -ge 4) { $columns[-2] } else { $null }
-    $versionText = if ($currentVersion -and $availableVersion) { "$currentVersion → $availableVersion" } else { '已检测到新版本' }
+    $availableVersion = Get-WingetPackageVersionFromLines -Lines $packageLine -PackageId $packageId -VersionKind Available
+    if (-not $availableVersion) {
+        return [pscustomobject]@{
+            updateStatus='Current'; summary="已安装 $currentVersion；未发现可用更新"
+            currentVersion=$currentVersion; availableVersion=$null
+        }
+    }
+    $versionText = if ($currentVersion -and $availableVersion) {
+        "已安装 $currentVersion；检测到待更新版本 $availableVersion"
+    }
+    elseif ($availableVersion) { "检测到待更新版本 $availableVersion" }
+    else { '已检测到新版本' }
     return [pscustomobject]@{
-        updateStatus='Available'; summary="有可用更新：$versionText；本次未安装"
+        updateStatus='Available'; summary="$versionText；本次未安装"
         currentVersion=$currentVersion; availableVersion=$availableVersion
     }
 }
@@ -184,6 +228,11 @@ function Set-NodeLts {
     Invoke-ExternalSetupCommand -Command $fnm -Arguments @('install', '--lts') -Quiet | Out-Null
     Invoke-ExternalSetupCommand -Command $fnm -Arguments @('default', 'lts-latest') -Quiet | Out-Null
     Add-RollbackNote 'fnm 下载的 Node.js 版本不会由自动回滚删除；可用 fnm list / fnm uninstall 人工管理。'
+    $listOutput = @(& $fnm list 2>&1)
+    $version = @($listOutput | ForEach-Object { [string]$_ } | Where-Object { $_ -match '(?i)\bv?\d+\.\d+\.\d+\b' } | ForEach-Object { $matches[0] } | Select-Object -First 1)
+    $installedVersion = if ($version.Count -gt 0) { [string]$version[0] } else { $null }
+    $summary = if ($installedVersion) { "Node.js $installedVersion" } else { 'Node.js 已安装，暂时无法读取版本' }
+    return [pscustomobject]@{ summary=$summary; installedVersion=$installedVersion }
 }
 
 function Set-PythonWithUv {
@@ -191,6 +240,18 @@ function Set-PythonWithUv {
     if (-not $uv) { throw 'uv 安装后尚未出现在 PATH；请重新打开终端后重运行 Python 模块。' }
     Invoke-ExternalSetupCommand -Command $uv -Arguments @('python', 'install') -Quiet | Out-Null
     Add-RollbackNote 'uv 管理的 Python 解释器不会由自动回滚删除；可用 uv python list / uninstall 人工管理。'
+    $pythonPathOutput = @(& $uv python find 2>&1)
+    $pythonPath = if ($LASTEXITCODE -eq 0) { @($pythonPathOutput | ForEach-Object { [string]$_ } | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1) } else { @() }
+    $installedVersion = $null
+    if ($pythonPath.Count -gt 0) {
+        $pythonExecutable = [string]$pythonPath[0]
+        $versionOutput = @(& $pythonExecutable --version 2>&1)
+        if ($LASTEXITCODE -eq 0 -and ($versionOutput -join ' ') -match '(?i)Python\s+([0-9]+(?:\.[0-9]+){1,3})') {
+            $installedVersion = $matches[1]
+        }
+    }
+    $summary = if ($installedVersion) { "Python $installedVersion" } else { 'Python 已安装，暂时无法读取版本' }
+    return [pscustomobject]@{ summary=$summary; installedVersion=$installedVersion }
 }
 
 function Set-TomlValue {
@@ -497,7 +558,7 @@ function Invoke-WslNetworkSetup {
     # The helper's preview validates its arguments, distro/path, and every managed
     # marker without changing WSL files. Only then update the Windows-side config.
     $preflightArguments = @($commonArguments[0..4]) + @('--what-if') + @($commonArguments[5..($commonArguments.Count - 1)])
-    Invoke-InteractiveExternalSetupCommand -Command 'wsl.exe' -Arguments $preflightArguments | Out-Null
+    Invoke-ExternalSetupCommand -Command 'wsl.exe' -Arguments $preflightArguments -Quiet | Out-Null
     Set-WslNetworkingConfig -Config $Config
     $arguments = @($commonArguments[0..4]) + @('--apply') + @($commonArguments[5..($commonArguments.Count - 1)])
     Invoke-InteractiveExternalSetupCommand -Command 'wsl.exe' -Arguments $arguments | Out-Null
@@ -991,9 +1052,14 @@ function Invoke-CodexSetupPlan {
                     if ($null -ne $actionOutcome) { $updateOutcomes += $actionOutcome }
                 }
                 elseif ($action.type -ne 'AuthGuidance') {
-                    Write-Host (('  [{0} 完成] {1}（{2:N1}s）' -f $actionProgress, $action.title, $actionTimer.Elapsed.TotalSeconds)) -ForegroundColor Green
+                    $completionSummary = if ($null -ne $actionOutcome -and $actionOutcome.PSObject.Properties.Name -contains 'summary') {
+                        [string]$actionOutcome.summary
+                    }
+                    else { $null }
+                    $completionPrefix = if ($completionSummary) { "$completionSummary；" } else { '' }
+                    Write-Host (('  [{0} 完成] {1}（{2}{3:N1}s）' -f $actionProgress, $action.title, $completionPrefix, $actionTimer.Elapsed.TotalSeconds)) -ForegroundColor Green
                 }
-                Write-SetupLog -Message '设置项目完成' -Data @{ id=$action.id; module=$module; title=$action.title; durationMs=[math]::Round($actionTimer.Elapsed.TotalMilliseconds) }
+                Write-SetupLog -Message '设置项目完成' -Data @{ id=$action.id; module=$module; title=$action.title; durationMs=[math]::Round($actionTimer.Elapsed.TotalMilliseconds); detail=$actionOutcome }
             }
             else {
                 [void]$failedOrBlockedIds.Add([string]$action.id)

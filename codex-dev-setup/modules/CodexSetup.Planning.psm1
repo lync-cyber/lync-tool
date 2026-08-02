@@ -82,16 +82,16 @@ function Get-CodexSetupPlan {
     }
 
     $packageMap = @(
-        @{ Module='Core'; Id='PowerShell7'; Title='安装 PowerShell 7'; Package='Microsoft.PowerShell'; Source='winget'; Installed=$Detection.powershell7.installed; Critical=$true; DetectionError=(Get-PlanningProperty $Detection.powershell7 'probeError') },
-        @{ Module='Core'; Id='WindowsTerminal'; Title='安装 Windows Terminal'; Package='Microsoft.WindowsTerminal'; Source='winget'; Installed=($Detection.windowsTerminal.command.installed -or $Detection.windowsTerminal.app.installed); Critical=$false; DetectionError=$(if (-not ($Detection.windowsTerminal.command.installed -or $Detection.windowsTerminal.app.installed)) { Get-PlanningProperty $Detection.windowsTerminal.app 'error' }) },
+        @{ Module='Core'; Id='PowerShell7'; Title='安装 PowerShell 7'; Package='Microsoft.PowerShell'; Source='winget'; Installed=$Detection.powershell7.installed; DetectedVersion=(Get-PlanningProperty $Detection.powershell7 'version'); Critical=$true; DetectionError=(Get-PlanningProperty $Detection.powershell7 'probeError') },
+        @{ Module='Core'; Id='WindowsTerminal'; Title='安装 Windows Terminal'; Package='Microsoft.WindowsTerminal'; Source='winget'; Installed=($Detection.windowsTerminal.command.installed -or $Detection.windowsTerminal.app.installed); DetectedVersion=(Get-PlanningProperty $Detection.windowsTerminal.command 'version'); Critical=$false; DetectionError=$(if (-not ($Detection.windowsTerminal.command.installed -or $Detection.windowsTerminal.app.installed)) { Get-PlanningProperty $Detection.windowsTerminal.app 'error' }) },
         @{ Module='Core'; Id='Ripgrep'; Title='安装 ripgrep'; Package='BurntSushi.ripgrep.MSVC'; Source='winget'; Installed=[bool](Get-Command rg.exe -ErrorAction SilentlyContinue); Critical=$false; DetectionError=$null },
         @{ Module='Core'; Id='Fd'; Title='安装 fd（可选：快速查找文件）'; Package='sharkdp.fd'; Source='winget'; Installed=[bool](Get-Command fd.exe -ErrorAction SilentlyContinue); Critical=$false; DetectionError=$null; Reason='可选效率工具，用于按名称快速查找文件和文件夹；不安装也不影响基础开发。' },
         @{ Module='Core'; Id='Jq'; Title='安装 jq（可选：查看和处理 JSON）'; Package='jqlang.jq'; Source='winget'; Installed=[bool](Get-Command jq.exe -ErrorAction SilentlyContinue); Critical=$false; DetectionError=$null; Reason='可选效率工具，用于在终端中查看、筛选和转换 JSON；不安装也不影响基础开发。' },
-        @{ Module='Git'; Id='Git'; Title='安装 Windows 原生 Git'; Package='Git.Git'; Source='winget'; Installed=$Detection.git.installed; Critical=$true; DetectionError=(Get-PlanningProperty $Detection.git 'probeError') },
-        @{ Module='Git'; Id='GitHubCli'; Title='安装 GitHub CLI'; Package='GitHub.cli'; Source='winget'; Installed=$Detection.githubCli.installed; Critical=$false; DetectionError=(Get-PlanningProperty $Detection.githubCli 'probeError') },
+        @{ Module='Git'; Id='Git'; Title='安装 Windows 原生 Git'; Package='Git.Git'; Source='winget'; Installed=$Detection.git.installed; DetectedVersion=(Get-PlanningProperty $Detection.git 'version'); Critical=$true; DetectionError=(Get-PlanningProperty $Detection.git 'probeError') },
+        @{ Module='Git'; Id='GitHubCli'; Title='安装 GitHub CLI'; Package='GitHub.cli'; Source='winget'; Installed=$Detection.githubCli.installed; DetectedVersion=(Get-PlanningProperty $Detection.githubCli 'version'); Critical=$false; DetectionError=(Get-PlanningProperty $Detection.githubCli 'probeError') },
         @{ Module='CodexDesktop'; Id='CodexDesktop'; Title='安装 ChatGPT/Codex Desktop'; Package='9PLM9XGG6VKS'; Source='msstore'; Installed=$Detection.codexDesktop.installed; Critical=$false; DetectionError=(Get-PlanningProperty $Detection.codexDesktop 'error') },
-        @{ Module='Node'; Id='Fnm'; Title='安装 Node.js 管理工具（fnm）'; Package='Schniz.fnm'; Source='winget'; Installed=$Detection.fnm.installed; Critical=$false; DetectionError=(Get-PlanningProperty $Detection.fnm 'probeError'); Reason='用于安装和切换不同版本的 Node.js。' },
-        @{ Module='Python'; Id='Uv'; Title='安装 Python 管理工具（uv）'; Package='astral-sh.uv'; Source='winget'; Installed=$Detection.uv.installed; Critical=$false; DetectionError=(Get-PlanningProperty $Detection.uv 'probeError'); Reason='用于安装 Python，并为每个项目管理独立环境。' }
+        @{ Module='Node'; Id='Fnm'; Title='安装 Node.js 管理工具（fnm）'; Package='Schniz.fnm'; Source='winget'; Installed=$Detection.fnm.installed; DetectedVersion=(Get-PlanningProperty $Detection.fnm 'version'); Critical=$false; DetectionError=(Get-PlanningProperty $Detection.fnm 'probeError'); Reason='用于安装和切换不同版本的 Node.js。' },
+        @{ Module='Python'; Id='Uv'; Title='安装 Python 管理工具（uv）'; Package='astral-sh.uv'; Source='winget'; Installed=$Detection.uv.installed; DetectedVersion=(Get-PlanningProperty $Detection.uv 'version'); Critical=$false; DetectionError=(Get-PlanningProperty $Detection.uv 'probeError'); Reason='用于安装 Python，并为每个项目管理独立环境。' }
     )
 
     foreach ($package in $packageMap) {
@@ -111,7 +111,7 @@ function Get-CodexSetupPlan {
         elseif ($Config.preferences.updatePolicy -eq 'CheckAndPrompt') {
             $actions += New-SetupAction -Module 'Updates' -Id "Check$($package.Id)" -Title "检查 $($package.Title -replace '^安装 ','') 更新" `
                 -Type 'WingetUpgradeCheck' -Target $package.Package -Reason '只查询是否有更新；不会下载或安装。' `
-                -Parameters @{ packageId=$package.Package; source=$package.Source }
+                -Parameters @{ packageId=$package.Package; source=$package.Source; detectedVersion=(Get-PlanningProperty $package 'DetectedVersion') }
         }
         else {
             $skipped += "$($package.Title -replace '^安装 ','') 已安装"
