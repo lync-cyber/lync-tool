@@ -1,0 +1,33 @@
+# Secrets and local overrides
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Editors and OS
+.idea/
+.vscode/settings.json
+.DS_Store
+Thumbs.db
+
+# Node.js
+node_modules/
+.pnpm-store/
+.yarn/cache/
+.next/
+dist/
+coverage/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Build and local logs
+build/
+out/
+*.log

@@ -1,0 +1,20 @@
+# AGENTS.md
+
+## Project context
+
+- Preferred Codex environment: {{AGENT_LABEL}}.
+- Keep one repository inside one operating-system toolchain; do not share `node_modules` or virtual environments across Windows and WSL.
+- Never read, print, or commit API keys, access tokens, SSH private keys, browser credentials, or `.env` values.
+
+## Working agreements
+
+- Inspect the repository and explain any risky or destructive action before running it.
+- Preserve unrelated user changes and keep edits narrowly scoped.
+- Use the project's declared package manager and lockfile.
+- Run the smallest relevant formatter, lint, type-check, and test commands before completion.
+- Ask before adding production dependencies or changing public interfaces.
+
+## Verification
+
+- Report commands run, results, remaining risks, and any manual follow-up.
+- Do not claim success when required checks were skipped or failed.
