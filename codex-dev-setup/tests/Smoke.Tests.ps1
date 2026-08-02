@@ -30,6 +30,10 @@ try {
     Assert-True ($config.codex.manageMcpPluginsSkills -eq $false) 'v1 leaves MCP/plugins/skills unmanaged'
     Assert-True ($config.codex.sandboxMode -eq 'workspace-write' -and $config.codex.windowsSandbox -eq 'unelevated') 'default Codex sandbox is workspace-scoped and unelevated'
     Assert-True (-not $config.codex.shareWindowsHomeToWsl) 'default WSL setup does not share Windows Codex home'
+    Assert-True (-not $config.wslNetworking.configure -and $config.wslNetworking.networkingMode -eq 'mirrored') 'WSL network changes are opt-in and mirrored is the recommended target'
+    $partialConfig = [pscustomobject]@{ wslNetworking=[pscustomobject]@{ configure=$true; httpPort=10900 } }
+    Merge-MissingSetupConfig -Target $partialConfig -Defaults $config
+    Assert-True ($partialConfig.wslNetworking.httpPort -eq 10900 -and $partialConfig.wslNetworking.proxyHost -eq '127.0.0.1' -and $partialConfig.wslNetworking.firewall) 'partial exported configuration keeps overrides and receives new nested defaults'
     Assert-True ((Get-SetupModuleDisplayName -Module 'Core') -eq '基础工具') 'module display names use the shared user-facing mapping'
 
     $availableCommand = [pscustomobject]@{ installed=$true; probeError=$null }
@@ -47,17 +51,22 @@ try {
         healthScore=80; healthLabel='基本可用'; detectionMode='快速'
         issues=@([pscustomobject]@{ stage=3; name='PowerShell probe'; error='expected probe failure' })
     }
-    $partialPlan = Get-CodexSetupPlan -Detection $partialDetection -Config $config
+    $savedPathForPlan = $env:PATH
+    try {
+        $env:PATH = $testRoot
+        $partialPlan = Get-CodexSetupPlan -Detection $partialDetection -Config $config
+    }
+    finally { $env:PATH = $savedPathForPlan }
     Assert-True (@($partialPlan.actions | Where-Object id -eq 'PowerShell7').Count -eq 0) 'failed detection does not become an automatic install action'
     Assert-True (@($partialPlan.actions | Where-Object id -eq 'Fnm').Count -eq 1) 'confirmed missing tool still becomes an install action'
     $fdAction = @($partialPlan.actions | Where-Object id -eq 'Fd' | Select-Object -First 1)
     $jqAction = @($partialPlan.actions | Where-Object id -eq 'Jq' | Select-Object -First 1)
     Assert-True ($fdAction.Count -eq 1 -and $fdAction[0].title -match '快速查找文件' -and $fdAction[0].reason -match '文件和文件夹') 'fd action explains its purpose in plain language'
     Assert-True ($jqAction.Count -eq 1 -and $jqAction[0].title -match '查看和处理 JSON' -and $jqAction[0].reason -match '筛选和转换') 'jq action explains its purpose in plain language'
+    $planningText = Get-Content -LiteralPath (Join-Path $root 'modules\CodexSetup.Planning.psm1') -Raw -Encoding utf8
     $terminalAction = @($partialPlan.actions | Where-Object id -eq 'TerminalProfiles' | Select-Object -First 1)
     $profileAction = @($partialPlan.actions | Where-Object id -eq 'PowerShellProfile' | Select-Object -First 1)
     Assert-True ($terminalAction[0].parameters.windowsProjects -eq $config.paths.windowsProjects -and $profileAction[0].parameters.windowsProjects -eq $config.paths.windowsProjects) 'configured Windows project path flows into terminal and PowerShell actions'
-    $planningText = Get-Content -LiteralPath (Join-Path $root 'modules\CodexSetup.Planning.psm1') -Raw -Encoding utf8
     Assert-True ($planningText -match '工作步骤.*moduleIndex' -and $planningText -match '\$actionNumber') 'plan output numbers work steps and their actions'
 
     $aliasDirectory = Join-Path $testRoot 'Microsoft\WindowsApps'
@@ -85,7 +94,24 @@ try {
     $desktopCodexRoot = Get-ToolInstallationRoot -Tool 'codex' -Path 'C:\Users\person\AppData\Local\Programs\OpenAI\Codex\bin\codex.exe'
     $packageCodexRoot = Get-ToolInstallationRoot -Tool 'codex' -Path 'C:\Program Files\WindowsApps\OpenAI.Codex_1.0.0_x64__test\app\resources\codex.exe'
     Assert-True ($desktopCodexRoot -eq $packageCodexRoot) 'Codex Desktop package entrypoints map to one installation'
+    Assert-True ((Convert-WindowsPathToWsl '\\wsl.localhost\Ubuntu-24.04\home\test\setup.sh') -eq '/home/test/setup.sh') 'WSL UNC paths convert back to Linux paths'
+    $distroMismatchRejected = $false
+    try { Convert-WindowsPathToWsl -Path '\\wsl.localhost\Ubuntu-A\home\test\setup.sh' -ExpectedDistro 'Ubuntu-B' | Out-Null }
+    catch { $distroMismatchRejected = $true }
+    Assert-True $distroMismatchRejected 'WSL UNC conversion rejects a helper path from a different distro'
     Assert-True ((Get-HealthLabel -Score 92) -eq '状态良好') 'health score has a readable status label'
+
+    $emptyListenerDetection = [pscustomobject]@{
+        wslNetwork = [pscustomobject]@{
+            networkingMode='mirrored'; recommendedHttpPort=10808; recommendedSocksPort=10808; loopbackListeners=@()
+        }
+    }
+    function global:Read-Host { return '3' }
+    try {
+        Select-WslNetworkConfiguration -Config $config -Detection $emptyListenerDetection
+        Assert-True (-not $config.wslNetworking.configure) 'network selection tolerates an empty localhost-listener result under strict mode'
+    }
+    finally { Remove-Item Function:\global:Read-Host -ErrorAction SilentlyContinue }
 
     $fastWsl = Get-WslToolchainInfo -WslInfo $null -Skip
     Assert-True ($fastWsl.skipped -and -not $fastWsl.available) 'fast detection skips starting a WSL distribution'
@@ -130,6 +156,10 @@ try {
     }
     $plan = [pscustomobject]@{ actions=@($globalAction) }
     Invoke-CodexSetupPlan -Plan $plan -Config $config -Confirm:$false | Out-Null
+    $firstToml = Get-Content -LiteralPath (Join-Path $env:USERPROFILE '.codex\config.toml') -Raw -Encoding utf8
+    $firstHeader = $firstToml.IndexOf('[')
+    $preservedToml = $firstToml.Insert($firstHeader, "model = `"gpt-test-preserved`"`n") + "`n[mcp_servers.preserved]`ncommand = `"example`"`n"
+    Set-Content -LiteralPath (Join-Path $env:USERPROFILE '.codex\config.toml') -Value $preservedToml -Encoding utf8
     Invoke-CodexSetupPlan -Plan $plan -Config $config -Confirm:$false | Out-Null
     $tomlPath = Join-Path $env:USERPROFILE '.codex\config.toml'
     $toml = Get-Content -LiteralPath $tomlPath -Raw -Encoding utf8
@@ -137,6 +167,22 @@ try {
     Assert-True (([regex]::Matches($toml, '(?m)^\[windows\]')).Count -eq 1) 'global TOML keeps one windows section'
     Assert-True ($toml -match 'sandbox\s*=\s*"unelevated"') 'global TOML writes unelevated Windows sandbox by default'
     Assert-True ($toml -match 'sandbox_mode\s*=\s*"workspace-write"') 'global TOML uses workspace-write by default'
+    Assert-True ($toml -match 'model\s*=\s*"gpt-test-preserved"' -and $toml -match '\[mcp_servers\.preserved\]') 'global TOML merge preserves unmanaged root keys and tables'
+    $unsupportedToml = "windows = { sandbox = `"unelevated`" }`n"
+    Set-Content -LiteralPath $tomlPath -Value $unsupportedToml -Encoding utf8
+    $unsupportedResults = @(Invoke-CodexSetupPlan -Plan $plan -Config $config -Confirm:$false)
+    Assert-True ($unsupportedResults[0].status -eq 'Failed' -and (Get-Content -LiteralPath $tomlPath -Raw -Encoding utf8).TrimEnd() -eq $unsupportedToml.TrimEnd()) 'global TOML refuses unsupported inline-table shapes without changing the file'
+    Set-Content -LiteralPath $tomlPath -Value $toml -Encoding utf8
+
+    $wslConfigPath = Join-Path $env:USERPROFILE '.wslconfig'
+    Set-Content -LiteralPath $wslConfigPath -Value "[wsl2]`nmemory=6GB`nnetworkingMode=nat`n`n[experimental]`nsparseVhd=true`n" -Encoding utf8
+    Set-WslNetworkingConfig -Config $config
+    Set-WslNetworkingConfig -Config $config
+    $wslConfigText = Get-Content -LiteralPath $wslConfigPath -Raw -Encoding utf8
+    Assert-True ($wslConfigText -match 'memory=6GB' -and $wslConfigText -match 'sparseVhd=true') '.wslconfig merge preserves unrelated VM and experimental settings'
+    Assert-True (([regex]::Matches($wslConfigText, '(?m)^networkingMode=mirrored\r?$')).Count -eq 1) '.wslconfig merge is idempotent and enables mirrored mode'
+    Assert-True ($wslConfigText -match '(?m)^dnsTunneling=true\r?$' -and $wslConfigText -match '(?m)^autoProxy=true\r?$' -and $wslConfigText -match '(?m)^firewall=true\r?$') '.wslconfig writes the recommended network safety settings'
+    Assert-True ($wslConfigText -match '(?m)^initialAutoProxyTimeout=5000\r?$') '.wslconfig gives Windows proxy discovery a longer startup window'
 
     $projectAction = [pscustomobject]@{
         module='Project'; id='ProjectTemplates'; title='test templates'; type='ProjectTemplates'; target=$webProject;

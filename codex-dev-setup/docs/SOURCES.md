@@ -11,11 +11,14 @@
 - [Configuration](https://learn.chatgpt.com/docs/configuration)：用户级和项目级配置层级、项目 trust 要求。
 - [AGENTS.md](https://learn.chatgpt.com/docs/agent-configuration/agents-md)：全局/项目/嵌套指令发现与覆盖规则。
 - [Worktrees](https://learn.chatgpt.com/docs/environments/git-worktrees)：Desktop managed worktree、Git 前置条件、环境可重建和 `$CODEX_HOME/worktrees`。
+- [Local environments](https://learn.chatgpt.com/docs/environments/local-environment#setup-scripts)：Desktop worktree setup script 的运行时机与平台专用脚本。
 
 ## Microsoft
 
 - [Install WSL](https://learn.microsoft.com/windows/wsl/install) 与 [WSL basic commands](https://learn.microsoft.com/windows/wsl/basic-commands)：`wsl --install`、`--distribution`、`--list --verbose`、WSL2 转换。
 - [Set up a WSL development environment](https://learn.microsoft.com/windows/wsl/setup/environment)：Linux home 文件存储、Terminal、Git 和编辑器边界。
+- [Accessing network applications with WSL](https://learn.microsoft.com/windows/wsl/networking)：mirrored 模式下 WSL 通过 IPv4 `127.0.0.1` 访问 Windows 服务，以及 VPN、DNS 和 LAN 边界。
+- [Advanced settings configuration in WSL](https://learn.microsoft.com/windows/wsl/wsl-config)：`.wslconfig` 位置、重启规则、`networkingMode`、`dnsTunneling`、`autoProxy`、`firewall` 与 `initialAutoProxyTimeout`。
 - [Use WinGet](https://learn.microsoft.com/windows/package-manager/winget/) 与 [install command](https://learn.microsoft.com/windows/package-manager/winget/install)：exact ID/source、agreement flags、安装和更新行为。
 - [Install PowerShell 7 on Windows](https://learn.microsoft.com/powershell/scripting/install/install-powershell-on-windows)：PowerShell 7 与 5.1 side-by-side，WinGet 为 Windows client 推荐安装方式。
 - [Windows Terminal installation](https://learn.microsoft.com/windows/terminal/install)、[startup settings](https://learn.microsoft.com/windows/terminal/customize-settings/startup) 与 [JSON fragment extensions](https://learn.microsoft.com/windows/terminal/json-fragment-extensions)：profile、默认终端和 fragment 机制。

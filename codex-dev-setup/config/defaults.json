@@ -30,6 +30,18 @@
     "shareWindowsHomeToWsl": false,
     "manageMcpPluginsSkills": false
   },
+  "wslNetworking": {
+    "configure": false,
+    "networkingMode": "mirrored",
+    "dnsTunneling": true,
+    "autoProxy": true,
+    "firewall": true,
+    "initialAutoProxyTimeoutMs": 5000,
+    "proxyMode": "persistent",
+    "proxyHost": "127.0.0.1",
+    "httpPort": 10808,
+    "socksPort": 10808
+  },
   "git": {
     "provider": "GitHub",
     "authentication": "Mixed",
