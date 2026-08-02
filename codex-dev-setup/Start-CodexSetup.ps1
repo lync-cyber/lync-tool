@@ -35,6 +35,8 @@ function Resolve-SetupConfiguration {
     param([Parameter(Mandatory)][string]$Path)
     $resolved = [System.IO.Path]::GetFullPath($Path)
     $config = Read-SetupConfig -Path $resolved
+    $defaults = Read-SetupConfig -Path (Join-Path $PSScriptRoot 'config\defaults.json')
+    Merge-MissingSetupConfig -Target $config -Defaults $defaults
     $config.paths.windowsProjects = [Environment]::ExpandEnvironmentVariables($config.paths.windowsProjects)
     return $config
 }
@@ -329,6 +331,9 @@ function Invoke-Workflow {
     $succeeded = $false
     try {
         $detection = Get-CachedSetupDetection -TargetProject $TargetProject -DeepDetection:$DeepDetection -ForceRefresh:$ForceRefresh
+        if ($WorkflowMode -eq 'Apply' -and -not $NonInteractive -and $detection.wsl.ubuntuWsl2 -and [int]$detection.windows.build -ge 22621) {
+            Select-WslNetworkConfiguration -Config $Config -Detection $detection
+        }
         $plan = Get-CodexSetupPlan -Detection $detection -Config $Config -ProjectPath $TargetProject
         if ($WorkflowMode -eq 'ProjectInit') {
             $plan.actions = @($plan.actions | Where-Object module -eq 'Project')

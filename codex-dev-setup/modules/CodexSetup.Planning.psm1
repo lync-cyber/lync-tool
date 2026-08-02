@@ -208,6 +208,53 @@ function Get-CodexSetupPlan {
         }
     }
 
+    $wslNetworking = Get-PlanningProperty $Config 'wslNetworking'
+    if ($null -ne $wslNetworking -and [bool](Get-PlanningProperty $wslNetworking 'configure' $false)) {
+        if (-not $Detection.windows.isWindows11 -or [int](Get-PlanningProperty $Detection.windows 'build' 0) -lt 22621) {
+            $warnings += '当前 Windows 版本不支持 WSL mirrored networking；已跳过网络配置。'
+            $skipped += 'WSL 网络设置未执行：需要 Windows 11 22H2 或更高版本。'
+        }
+        elseif (-not $Detection.wsl.ubuntuWsl2) {
+            $warnings += '需要先准备可用的 WSL2 Ubuntu，之后才能配置 mirrored 网络与 WSL 代理环境。'
+            $skipped += 'WSL 网络设置将在 WSL2 Ubuntu 可用后执行。'
+        }
+        else {
+            $wslVersionText = [string](Get-PlanningProperty $Detection.wsl 'version' '')
+            if ($wslVersionText -match '(\d+\.\d+(?:\.\d+){0,2})') {
+                if ([version]$matches[1] -lt [version]'2.0.0') {
+                    $warnings += '当前 WSL 包版本较旧；应用 mirrored 配置前请先在 PowerShell 运行 wsl --update。'
+                }
+            }
+            else {
+                $warnings += '未能确认 WSL 包版本；应用 mirrored 配置前建议先在 PowerShell 运行 wsl --update。'
+            }
+            $proxyMode = [string](Get-PlanningProperty $wslNetworking 'proxyMode' 'none')
+            $httpPort = [int](Get-PlanningProperty $wslNetworking 'httpPort' 10808)
+            $socksPort = [int](Get-PlanningProperty $wslNetworking 'socksPort' $httpPort)
+            $proxyText = if ($proxyMode -eq 'persistent') {
+                "同时持久加载 HTTP $httpPort / SOCKS $socksPort 代理；Codex 新启动的 WSL 进程也可继承。"
+            }
+            else { '配置 WSL mirrored 网络，并移除本工具管理的持久代理。' }
+            $actions += New-SetupAction -Module 'Network' -Id 'ConfigureWslNetwork' -Title '配置 WSL mirrored 网络与本机代理' -Type 'WslNetworkConfigure' `
+                -Target '%USERPROFILE%\.wslconfig；WSL ~/.config/codex/proxy.sh' `
+                -Reason "WSL 通过 127.0.0.1 访问 Windows 服务；本工具不会开启 v2rayN LAN 监听。$proxyText" `
+                -Parameters @{
+                    distro=$Detection.wsl.ubuntuName
+                    proxyMode=$proxyMode
+                    httpPort=$httpPort
+                    socksPort=$socksPort
+                }
+            if ($proxyMode -eq 'persistent') {
+                $warnings += '已选择持久代理：请先启动 v2rayN 再启动 Codex；v2rayN 未运行或端口变化时，依赖代理变量的联网命令会失败。'
+            }
+            $detectedNetwork = Get-PlanningProperty $Detection 'wslNetwork'
+            $wildcardListeners = @(Get-PlanningProperty $detectedNetwork 'wildcardListeners' @())
+            if ($wildcardListeners.Count -gt 0) {
+                $warnings += '检测到候选代理端口监听在 0.0.0.0 或 ::；请在 v2rayN 中关闭“允许来自局域网的连接”。'
+            }
+        }
+    }
+
     $actions += New-SetupAction -Module 'Git' -Id 'ConfigureGit' -Title '设置 Git 常用安全选项' -Type 'GitConfig' `
         -Target '~/.gitconfig' -Reason '设置默认分支、拉取和换行规则；不读取或保存账号信息。'
     $actions += New-SetupAction -Module 'Git' -Id 'AuthGuidance' -Title 'GitHub 登录方法（可稍后完成）' -Type 'AuthGuidance' `
@@ -276,7 +323,12 @@ function Get-CodexSetupPlan {
         warnings = $warnings
         information = $information
         skipped = $skipped
-        requiresRestart = @('切换 Codex Desktop Agent 后必须重启应用。', '安装或转换 WSL 后 Windows 可能要求重启。', '安装新工具后重新打开终端以刷新 PATH。')
+        requiresRestart = @(@(
+            '切换 Codex Desktop Agent 后必须重启应用。',
+            '安装或转换 WSL 后 Windows 可能要求重启。',
+            '安装新工具后重新打开终端以刷新 PATH。',
+            $(if ($null -ne $wslNetworking -and [bool](Get-PlanningProperty $wslNetworking 'configure' $false)) { '修改 .wslconfig 或 WSL 代理后，请先保存 WSL 中的工作，再运行 wsl --shutdown 并重新打开 Codex。' })
+        ) | Where-Object { $_ })
     }
 }
 

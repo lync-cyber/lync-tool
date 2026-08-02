@@ -61,6 +61,7 @@ Set-Location <解压目录>
 ## 它会做什么
 
 - 分阶段检测 Windows、Codex Desktop、Terminal、开发工具、WSL、项目类型和 PATH；区分真实安装冲突、同安装重复入口与 Windows 应用别名。
+- 检测 `%USERPROFILE%\.wslconfig`、Windows 系统代理和常见 localhost 代理端口；真实应用时可选配置 mirrored networking 与 v2rayN 持久代理。
 - 扫描项目标记，为 Windows 专属 .NET/PowerShell 项目建议 Windows native Agent，为 Web/Python/跨平台项目建议 WSL Agent，并自动匹配 PowerShell 7 或 WSL terminal。
 - 用 WinGet 生成安装/更新检查计划，真实应用时按功能模块确认。
 - 配置 Git 的非秘密基础选项；GitHub CLI 与 SSH 只显示官方交互命令。
@@ -76,6 +77,36 @@ Set-Location <解压目录>
 对确实需要完全访问的可信个人项目，可在 `config/defaults.json` 中显式改用 `sandboxMode = "danger-full-access"`，并按需启用 `shareWindowsHomeToWsl` 或 `windowsSandbox = "elevated"`。Windows elevated sandbox 与 Windows 的“Windows Sandbox”可选功能不是同一个机制。
 
 脚本不会读取或记录 API Key、访问令牌、SSH 私钥、浏览器凭据或 `.env`；不会自动迁移已有仓库；不会绕过 UAC、企业策略或安全软件；第一版不管理 MCP、插件和技能。
+
+## WSL mirrored 网络与 v2rayN
+
+“开始设置”完成 WSL 检测后会提供一个可跳过的网络环节：
+
+- 推荐项写入 `networkingMode=mirrored`、`dnsTunneling=true`、`autoProxy=true`、`firewall=true` 和 `initialAutoProxyTimeout=5000`，保留原有 `.wslconfig` 中的内存、CPU、swap 等设置。
+- v2rayN 只需监听 Windows `127.0.0.1`，不需要启用“允许来自局域网的连接”，也不会由本工具创建 LAN 防火墙入站规则。
+- 选择持久代理时会生成 WSL `~/.config/codex/proxy.sh`，并通过受管区块从 `~/.profile` 和 `~/.bashrc` 加载。这样新启动的 Codex WSL 进程不依赖另一个终端中临时执行过的 `export`。
+- 工具只把 localhost 监听识别为候选端口，无法仅凭监听状态判断 HTTP/SOCKS 协议；最终必须按 v2rayN 界面确认，不会假设所有版本都使用 10808。
+- 持久代理要求先启动 v2rayN 再启动 Codex。端口改变时重新运行网络环节，或编辑代理文件后执行 `wsl --shutdown`。
+- 再次运行网络环节并选择“mirrored + 关闭本工具持久代理”会移除本工具在 `proxy.sh`、`.profile` 和 `.bashrc` 中管理的代理加载区块，不会修改 v2rayN。
+- 若工具无法确认 WSL 包版本，会提示先在 PowerShell 运行 `wsl --update`；旧版 WSL 不应直接应用 mirrored 配置。
+
+应用后先保存所有 WSL 工作，再从 PowerShell 运行：
+
+```powershell
+wsl --shutdown
+```
+
+重新打开 Codex 后，可让 WSL Agent 运行以下命令验证：
+
+```bash
+uname -a
+echo "$WSL_DISTRO_NAME"
+env | grep -i proxy
+curl -I --connect-timeout 10 https://github.com
+git ls-remote https://github.com/openai/codex.git HEAD
+```
+
+Codex Desktop 的 Linux setup script 是项目/工作树级补充：官方文档说明它在创建新 worktree 时自动运行。需要显式初始化依赖时，可在 Desktop 的 local environment 中加入 `. "$HOME/.config/codex/proxy.sh"`；它不替代上述用户级持久加载。
 
 ## 运行数据与回滚
 

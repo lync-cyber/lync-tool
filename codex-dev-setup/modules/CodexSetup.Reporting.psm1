@@ -89,6 +89,12 @@ function Convert-DetectionToSummaryRows {
     $terminalInstalled = $Detection.windowsTerminal.command.installed -or $Detection.windowsTerminal.app.installed
     $terminalStatus = if ($terminalError -and -not $terminalInstalled) { '检测失败' } elseif ($terminalInstalled) { '可用' } else { '未安装' }
     $wslStatus = if (Get-ReportProperty $Detection.wsl 'error') { '检测失败' } elseif (-not $Detection.wsl.installed) { '未安装' } elseif (-not $Detection.wsl.ubuntuWsl2) { '未配置' } else { '可用' }
+    $wslNetwork = Get-ReportProperty $Detection 'wslNetwork'
+    $wslNetworkStatus = if ($null -eq $wslNetwork) { '未检测' } elseif (Get-ReportProperty $wslNetwork 'error') { '检测失败' } elseif (Get-ReportProperty $wslNetwork 'mirroredConfigured' $false) { '可用' } else { '可优化' }
+    $wslNetworkDetail = if ($null -eq $wslNetwork) { '' } else {
+        $ports = @((Get-ReportProperty $wslNetwork 'loopbackListeners' @()) | ForEach-Object { $_.LocalPort } | Sort-Object -Unique)
+        "模式：$(Get-ReportProperty $wslNetwork 'networkingMode' 'unknown')$(if ($ports.Count -gt 0) { '；localhost 端口：' + ($ports -join '、') })"
+    }
     $sandboxStatus = switch ($Detection.windowsSandboxFeature.state) {
         'Enabled' { '可用' }
         'Disabled' { '未配置' }
@@ -107,6 +113,7 @@ function Convert-DetectionToSummaryRows {
         (New-DetectionSummaryRow 'Git (Windows)' (Get-CommandSummaryStatus $Detection.git) $Detection.git.version),
         (New-DetectionSummaryRow 'GitHub CLI' (Get-CommandSummaryStatus $Detection.githubCli) $Detection.githubCli.version),
         (New-DetectionSummaryRow 'WSL2 Ubuntu' $wslStatus $(if ($Detection.wsl.ubuntuName) { $Detection.wsl.ubuntuName } else { '未检测到' })),
+        (New-DetectionSummaryRow 'WSL 网络' $wslNetworkStatus $wslNetworkDetail),
         (New-DetectionSummaryRow 'Windows Sandbox 可选功能' $sandboxStatus $Detection.windowsSandboxFeature.state),
         (New-DetectionSummaryRow 'Node.js' (Get-CommandSummaryStatus $Detection.node) $Detection.node.version),
         (New-DetectionSummaryRow 'fnm' (Get-CommandSummaryStatus $Detection.fnm) $Detection.fnm.version),

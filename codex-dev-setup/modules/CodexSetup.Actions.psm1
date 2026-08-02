@@ -1,10 +1,18 @@
 Set-StrictMode -Version Latest
 
 function Convert-WindowsPathToWsl {
-    param([Parameter(Mandatory)][string]$Path)
+    param([Parameter(Mandatory)][string]$Path, [string]$ExpectedDistro)
     $full = [System.IO.Path]::GetFullPath($Path)
     if ($full -match '^([A-Za-z]):\\(.*)$') {
         return "/mnt/$($matches[1].ToLowerInvariant())/$($matches[2].Replace('\','/'))"
+    }
+    if ($full -match '^\\\\(?:wsl\.localhost|wsl\$)\\([^\\]+)\\(.*)$') {
+        $pathDistro = $matches[1]
+        $linuxPath = $matches[2]
+        if ($ExpectedDistro -and $pathDistro -ine $ExpectedDistro) {
+            throw "WSL helper 位于 $pathDistro，但计划目标发行版是 $ExpectedDistro；为避免在错误发行版执行，本次已停止。"
+        }
+        return '/' + $linuxPath.Replace('\', '/')
     }
     throw "无法将路径转换为 WSL 路径：$Path"
 }
@@ -230,15 +238,109 @@ function Set-TomlValue {
     $Lines.Insert($sectionEnd, "$Key = $Value # managed by CodexDevSetup")
 }
 
+function Set-IniValue {
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][AllowEmptyString()][System.Collections.Generic.List[string]]$Lines,
+        [Parameter(Mandatory)][string]$Section,
+        [Parameter(Mandatory)][string]$Key,
+        [Parameter(Mandatory)][string]$Value
+    )
+    $sectionStart = -1
+    $sectionEnd = $Lines.Count
+    $headerPattern = '^\s*\[' + [regex]::Escape($Section) + '\]\s*(?:[;#].*)?$'
+    for ($i = 0; $i -lt $Lines.Count; $i++) {
+        if ($Lines[$i] -match $headerPattern) { $sectionStart = $i; break }
+    }
+    if ($sectionStart -lt 0) {
+        if ($Lines.Count -gt 0 -and $Lines[$Lines.Count - 1] -ne '') { [void]$Lines.Add('') }
+        [void]$Lines.Add("[$Section]")
+        $sectionStart = $Lines.Count - 1
+        $sectionEnd = $Lines.Count
+    }
+    else {
+        for ($i = $sectionStart + 1; $i -lt $Lines.Count; $i++) {
+            if ($Lines[$i] -match '^\s*\[') { $sectionEnd = $i; break }
+        }
+    }
+    $keyPattern = '^\s*' + [regex]::Escape($Key) + '\s*='
+    for ($i = $sectionStart + 1; $i -lt $sectionEnd; $i++) {
+        if ($Lines[$i] -match $keyPattern) {
+            $Lines[$i] = "$Key=$Value"
+            return
+        }
+    }
+    $Lines.Insert($sectionEnd, "$Key=$Value")
+}
+
 function Quote-TomlString {
     param([Parameter(Mandatory)][string]$Value)
-    return '"' + $Value.Replace('\', '\\').Replace('"', '\"') + '"'
+    $escaped = $Value.Replace('\', '\\').Replace('"', '\"')
+    $escaped = $escaped.Replace("`b", '\b').Replace("`t", '\t').Replace("`n", '\n').Replace("`f", '\f').Replace("`r", '\r')
+    return '"' + $escaped + '"'
+}
+
+function Assert-CodexConfigValues {
+    param([Parameter(Mandatory)]$Config)
+    $allowed = [ordered]@{
+        approvalPolicy=@('untrusted', 'on-request', 'never')
+        sandboxMode=@('read-only', 'workspace-write', 'danger-full-access')
+        windowsSandbox=@('unelevated', 'elevated')
+        webSearch=@('disabled', 'cached', 'indexed', 'live')
+        personality=@('', 'none', 'friendly', 'pragmatic')
+        reasoningEffort=@('', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra')
+    }
+    foreach ($entry in $allowed.GetEnumerator()) {
+        $value = [string]$Config.codex.($entry.Key)
+        if ($value -notin $entry.Value) {
+            throw "Codex 配置值无效：$($entry.Key)=$value"
+        }
+    }
+    foreach ($booleanName in @('checkForUpdateOnStartup', 'networkAccess')) {
+        if ($Config.codex.$booleanName -isnot [bool]) { throw "Codex 配置值必须是布尔值：$booleanName" }
+    }
+}
+
+function Assert-SupportedCodexTomlShape {
+    param([AllowEmptyString()][string]$Content)
+    if ([string]::IsNullOrWhiteSpace($Content)) { return }
+    if ($Content -match "'''" -or $Content -match '"""') {
+        throw '现有 config.toml 含多行字符串；为避免误改，本工具不会自动合并，请先改为普通字符串或手动配置。'
+    }
+    foreach ($section in @('windows', 'sandbox_workspace_write')) {
+        if ($Content -match ('(?m)^\s*' + [regex]::Escape($section) + '\s*=') -or
+            $Content -match ('(?m)^\s*' + [regex]::Escape($section) + '\s*\.')) {
+            throw "现有 config.toml 使用 $section 的 inline table 或 dotted key；为避免生成重复定义，本工具不会自动合并。"
+        }
+        $headerMatches = [regex]::Matches($Content, ('(?m)^\s*\[\[?\s*["'']?' + [regex]::Escape($section) + '["'']?\s*\]\]?\s*(?:#.*)?$'))
+        if ($headerMatches.Count -gt 1 -or ($headerMatches.Count -eq 1 -and $headerMatches[0].Value -match '^\s*\[\[')) {
+            throw "现有 config.toml 中 $section 表重复或使用数组表；本工具不会自动合并。"
+        }
+    }
+}
+
+function Assert-TomlParsesWhenPythonAvailable {
+    param([Parameter(Mandatory)][string]$Content)
+    $python = Get-Command python.exe -All -ErrorAction SilentlyContinue | Where-Object {
+        $_.Source -and $_.Source -notmatch '(?i)\\WindowsApps\\' -and (Test-Path -LiteralPath $_.Source -PathType Leaf)
+    } | Select-Object -First 1
+    if ($null -eq $python) { return }
+    $temporaryPath = [System.IO.Path]::GetTempFileName()
+    try {
+        Set-Content -LiteralPath $temporaryPath -Value $Content -Encoding utf8NoBOM
+        $parseOutput = @(& $python.Source -c 'import sys,tomllib; tomllib.load(open(sys.argv[1], "rb"))' $temporaryPath 2>&1)
+        if ($LASTEXITCODE -ne 0) {
+            throw "生成后的 config.toml 未通过 TOML 解析：$(@($parseOutput | Select-Object -Last 1) -join '')"
+        }
+    }
+    finally { Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue }
 }
 
 function Set-CodexGlobalConfig {
     param([Parameter(Mandatory)]$Config)
+    Assert-CodexConfigValues -Config $Config
     $path = Join-Path $env:USERPROFILE '.codex\config.toml'
     $existing = if (Test-Path -LiteralPath $path) { Get-Content -LiteralPath $path -Raw -Encoding utf8 } else { '' }
+    Assert-SupportedCodexTomlShape -Content $existing
     $lines = [System.Collections.Generic.List[string]]::new()
     foreach ($line in @($existing -split "`r?`n")) { $lines.Add($line) }
     while ($lines.Count -gt 0 -and $lines[$lines.Count - 1] -eq '') { $lines.RemoveAt($lines.Count - 1) }
@@ -257,6 +359,7 @@ function Set-CodexGlobalConfig {
         Set-TomlValue -Lines $lines -Section 'sandbox_workspace_write' -Key 'network_access' -Value $(if ($Config.codex.networkAccess) { 'true' } else { 'false' })
     }
     $content = $lines -join [Environment]::NewLine
+    Assert-TomlParsesWhenPythonAvailable -Content $content
     Set-SetupFileContent -Path $path -Content $content -Description '更新 Codex 用户级 config.toml' | Out-Null
 
     $fileAccessText = switch ($Config.codex.sandboxMode) {
@@ -278,6 +381,134 @@ function Set-CodexGlobalConfig {
     Write-Host "      · $approvalText；$windowsText；$webText"
     Write-Host "      · 配置文件：$path" -ForegroundColor DarkGray
     Write-Host '      · 修改前的文件已备份，可从首页选择撤销。' -ForegroundColor DarkGray
+}
+
+function Read-ProxyPort {
+    param([Parameter(Mandatory)][string]$Label, [Parameter(Mandatory)][int]$DefaultPort)
+    while ($true) {
+        $raw = (Read-Host "$Label（直接按 Enter 使用 $DefaultPort）").Trim()
+        if ([string]::IsNullOrWhiteSpace($raw)) { return $DefaultPort }
+        $port = 0
+        if ([int]::TryParse($raw, [ref]$port) -and $port -ge 1 -and $port -le 65535) { return $port }
+        Write-SetupStatus -Kind Warning -Message '端口必须是 1–65535 之间的整数。'
+    }
+}
+
+function Select-WslNetworkConfiguration {
+    param([Parameter(Mandatory)]$Config, [Parameter(Mandatory)]$Detection)
+    $network = $Config.wslNetworking
+    $detected = $Detection.wslNetwork
+    $defaultHttpPort = if ($null -ne $detected) { [int]$detected.recommendedHttpPort } else { 10808 }
+    $defaultSocksPort = if ($null -ne $detected) { [int]$detected.recommendedSocksPort } else { $defaultHttpPort }
+    Write-Host ''
+    Write-Host '  可选：配置 WSL 网络与 v2rayN 代理' -ForegroundColor Cyan
+    $currentNetworkMode = if ($null -ne $detected) { [string]$detected.networkingMode } else { '未检测' }
+    Write-Host "    当前网络模式：$currentNetworkMode"
+    $listenerPorts = @()
+    if ($null -ne $detected) {
+        $listenerPorts = @($detected.loopbackListeners | ForEach-Object { $_.LocalPort } | Sort-Object -Unique)
+    }
+    if ($listenerPorts.Count -gt 0) {
+        Write-Host "    检测到 Windows localhost 候选端口：$($listenerPorts -join '、')" -ForegroundColor DarkGray
+        Write-Host '    端口监听不代表协议；请以 v2rayN 界面中的 HTTP/Mixed 与 SOCKS 端口为准。' -ForegroundColor DarkGray
+    }
+    $wildcardListeners = @()
+    if ($null -ne $detected -and $null -ne $detected.PSObject.Properties['wildcardListeners']) {
+        $wildcardListeners = @($detected.wildcardListeners)
+    }
+    if ($wildcardListeners.Count -gt 0) {
+        Write-SetupStatus -Kind Warning -Message '检测到候选代理端口监听在 0.0.0.0 或 ::；请在 v2rayN 中关闭“允许来自局域网的连接”。'
+    }
+    Write-Host '    [1] 推荐：mirrored + 持久代理'
+    Write-Host '        Codex 独立启动的 WSL 进程也会加载代理；本工具不会开启 v2rayN LAN。' -ForegroundColor DarkGray
+    Write-Host '    [2] mirrored + 关闭本工具持久代理'
+    Write-Host '        同时移除本工具管理的持久代理；不影响 v2rayN 自身设置。' -ForegroundColor DarkGray
+    Write-Host '    [3/Enter] 保持现状'
+    while ($true) {
+        $choice = (Read-Host '  请选择').Trim().ToUpperInvariant()
+        switch ($choice) {
+            '1' {
+                $network.configure = $true
+                $network.networkingMode = 'mirrored'
+                $network.proxyMode = 'persistent'
+                $network.proxyHost = '127.0.0.1'
+                $network.httpPort = Read-ProxyPort -Label '  HTTP 或 Mixed 端口' -DefaultPort $defaultHttpPort
+                $network.socksPort = Read-ProxyPort -Label '  SOCKS 或 Mixed 端口' -DefaultPort $defaultSocksPort
+                Write-SetupStatus -Kind Warning -Message '持久代理启用后，请先启动 v2rayN 再启动 Codex。'
+                return
+            }
+            '2' {
+                $network.configure = $true
+                $network.networkingMode = 'mirrored'
+                $network.proxyMode = 'none'
+                return
+            }
+            { $_ -in @('', '3') } {
+                $network.configure = $false
+                return
+            }
+            default { Write-SetupStatus -Kind Warning -Message "无效选项：$choice" }
+        }
+    }
+}
+
+function Set-WslNetworkingConfig {
+    param([Parameter(Mandatory)]$Config)
+    $network = $Config.wslNetworking
+    if ([string]$network.networkingMode -ne 'mirrored') { throw '当前版本只自动配置安全的 WSL mirrored networking。' }
+    $path = Join-Path $env:USERPROFILE '.wslconfig'
+    $existing = if (Test-Path -LiteralPath $path) { Get-Content -LiteralPath $path -Raw -Encoding utf8 } else { '' }
+    $lines = [System.Collections.Generic.List[string]]::new()
+    foreach ($line in @($existing -split "`r?`n")) { [void]$lines.Add($line) }
+    while ($lines.Count -gt 0 -and $lines[$lines.Count - 1] -eq '') { $lines.RemoveAt($lines.Count - 1) }
+    Set-IniValue -Lines $lines -Section 'wsl2' -Key 'networkingMode' -Value 'mirrored'
+    Set-IniValue -Lines $lines -Section 'wsl2' -Key 'dnsTunneling' -Value $network.dnsTunneling.ToString().ToLowerInvariant()
+    Set-IniValue -Lines $lines -Section 'wsl2' -Key 'autoProxy' -Value $network.autoProxy.ToString().ToLowerInvariant()
+    Set-IniValue -Lines $lines -Section 'wsl2' -Key 'firewall' -Value $network.firewall.ToString().ToLowerInvariant()
+    $timeout = [int]$network.initialAutoProxyTimeoutMs
+    if ($timeout -lt 0 -or $timeout -gt 60000) { throw 'initialAutoProxyTimeoutMs 必须在 0–60000 之间。' }
+    Set-IniValue -Lines $lines -Section 'experimental' -Key 'initialAutoProxyTimeout' -Value ([string]$timeout)
+    $changed = Set-SetupFileContent -Path $path -Content ($lines -join [Environment]::NewLine) -Description '更新 WSL 全局网络配置'
+    Write-Host "    $(if ($changed) { '已更新' } else { '已符合目标配置' })：$path" -ForegroundColor DarkGray
+}
+
+function Invoke-WslNetworkSetup {
+    param([Parameter(Mandatory)]$Action, [Parameter(Mandatory)]$Config)
+    $proxyMode = [string]$Config.wslNetworking.proxyMode
+    if ($proxyMode -notin @('persistent', 'none')) { throw "不支持的 WSL 代理模式：$proxyMode" }
+    if ([string]$Config.wslNetworking.proxyHost -ne '127.0.0.1') { throw 'mirrored 模式只允许自动配置 127.0.0.1 代理。' }
+    foreach ($portName in @('httpPort', 'socksPort')) {
+        $port = [int]$Config.wslNetworking.$portName
+        if ($port -lt 1 -or $port -gt 65535) { throw "$portName 必须在 1–65535 之间。" }
+    }
+    $distro = [string]$Action.parameters.distro
+    $helper = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\wsl\setup.sh'))
+    $helperWsl = Convert-WindowsPathToWsl -Path $helper -ExpectedDistro $distro
+    $commonArguments = @(
+        '-d', $distro, '--', 'bash', $helperWsl, '--network-only',
+        '--proxy-mode', $proxyMode, '--proxy-host', [string]$Config.wslNetworking.proxyHost,
+        '--proxy-http-port', [string]$Config.wslNetworking.httpPort,
+        '--proxy-socks-port', [string]$Config.wslNetworking.socksPort
+    )
+    if ($Config.codex.shareWindowsHomeToWsl) {
+        $codexHomeWsl = Convert-WindowsPathToWsl (Join-Path $env:USERPROFILE '.codex')
+        $commonArguments += @('--share-codex-home', $codexHomeWsl)
+    }
+    # The helper's preview validates its arguments, distro/path, and every managed
+    # marker without changing WSL files. Only then update the Windows-side config.
+    $preflightArguments = @($commonArguments[0..4]) + @('--what-if') + @($commonArguments[5..($commonArguments.Count - 1)])
+    Invoke-InteractiveExternalSetupCommand -Command 'wsl.exe' -Arguments $preflightArguments | Out-Null
+    Set-WslNetworkingConfig -Config $Config
+    $arguments = @($commonArguments[0..4]) + @('--apply') + @($commonArguments[5..($commonArguments.Count - 1)])
+    Invoke-InteractiveExternalSetupCommand -Command 'wsl.exe' -Arguments $arguments | Out-Null
+    if ($proxyMode -eq 'persistent') {
+        Write-Host '    已确认 ~/.config/codex/proxy.sh 由 ~/.profile 与 ~/.bashrc 持久加载。' -ForegroundColor DarkCyan
+    }
+    else {
+        Write-Host '    已保留 mirrored 网络，并关闭本工具管理的 WSL 持久代理。' -ForegroundColor DarkCyan
+    }
+    Write-Host '    请保存 WSL 中的工作，随后运行 wsl --shutdown，再重新打开 Codex。' -ForegroundColor Yellow
+    Add-RollbackNote '.wslconfig 已纳入本次 Windows 回滚清单；WSL 代理变更可用 wsl/setup.sh --rollback --network-only 删除。'
 }
 
 function Set-GitBaseline {
@@ -536,6 +767,7 @@ function Invoke-SetupAction {
         'WslInstallDistro'    { Invoke-ExternalSetupCommand 'wsl.exe' @('--install', '--distribution', 'Ubuntu') | Out-Null; Add-RollbackNote 'Ubuntu 安装不会由自动回滚注销，以避免数据丢失。' }
         'WslConvert2'         { Invoke-ExternalSetupCommand 'wsl.exe' @('--set-version', $Action.parameters.distro, '2') | Out-Null; Add-RollbackNote 'WSL2 转换不会自动降级回 WSL1。' }
         'WslConfigure'        { Invoke-WslSetup -Action $Action -Config $Config }
+        'WslNetworkConfigure' { Invoke-WslNetworkSetup -Action $Action -Config $Config }
         'GitConfig'           { Set-GitBaseline }
         'AuthGuidance'        { Show-AuthenticationGuidance }
         'TerminalFragment'    { Set-TerminalFragment -Distro $Action.parameters.distro -WindowsProjects $Action.parameters.windowsProjects }
@@ -880,4 +1112,7 @@ function Invoke-CodexSetupRollback {
     }
 }
 
-Export-ModuleMember -Function @('Invoke-CodexSetupPlan', 'Invoke-CodexSetupRollback', 'New-ProjectTemplateMap')
+Export-ModuleMember -Function @(
+    'Invoke-CodexSetupPlan', 'Invoke-CodexSetupRollback', 'New-ProjectTemplateMap',
+    'Select-WslNetworkConfiguration', 'Convert-WindowsPathToWsl', 'Set-WslNetworkingConfig'
+)

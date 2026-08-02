@@ -348,7 +348,7 @@ function Get-SetupModuleDisplayName {
     param([Parameter(Mandatory)][string]$Module)
     $names = @{
         Core = '基础工具'; Git = '代码版本管理'; CodexDesktop = 'Codex Desktop'
-        Node = 'Node.js 开发环境'; Python = 'Python 开发环境'; WSL = 'WSL/Linux 开发环境'
+        Node = 'Node.js 开发环境'; Python = 'Python 开发环境'; WSL = 'WSL/Linux 开发环境'; Network = 'WSL 网络与代理'
         Terminal = '终端'; CodexConfig = 'Codex 设置'; Project = '项目配置文件'; Updates = '软件更新检查'
     }
     if ($names.ContainsKey($Module)) { return $names[$Module] }
@@ -357,7 +357,7 @@ function Get-SetupModuleDisplayName {
 
 function Get-SetupOrderedModules {
     param([AllowNull()]$Actions)
-    $preferredOrder = @('Core', 'Git', 'CodexDesktop', 'Node', 'Python', 'WSL', 'Terminal', 'CodexConfig', 'Project', 'Updates')
+    $preferredOrder = @('Core', 'Git', 'CodexDesktop', 'Node', 'Python', 'WSL', 'Network', 'Terminal', 'CodexConfig', 'Project', 'Updates')
     $actionModules = @($Actions | ForEach-Object { $_.module } | Where-Object { $_ } | Select-Object -Unique)
     $extraModules = @($actionModules | Where-Object { $_ -notin $preferredOrder })
     return @($preferredOrder + $extraModules | Where-Object { $_ -in $actionModules })
@@ -401,11 +401,26 @@ function Write-SetupSectionHeader {
     Write-Host ('─' * $Width) -ForegroundColor DarkGray
 }
 
+function Merge-MissingSetupConfig {
+    param([Parameter(Mandatory)]$Target, [Parameter(Mandatory)]$Defaults)
+    foreach ($defaultProperty in $Defaults.PSObject.Properties) {
+        $targetProperty = $Target.PSObject.Properties[$defaultProperty.Name]
+        if ($null -eq $targetProperty) {
+            $Target | Add-Member -NotePropertyName $defaultProperty.Name -NotePropertyValue $defaultProperty.Value
+            continue
+        }
+        if ($null -ne $targetProperty.Value -and $null -ne $defaultProperty.Value -and
+            $targetProperty.Value -is [pscustomobject] -and $defaultProperty.Value -is [pscustomobject]) {
+            Merge-MissingSetupConfig -Target $targetProperty.Value -Defaults $defaultProperty.Value
+        }
+    }
+}
+
 Export-ModuleMember -Function @(
     'Initialize-SetupRuntime', 'Get-SetupRuntime', 'Write-SetupLog', 'Write-SetupStatus',
     'Read-SetupConfig', 'Export-SetupConfig', 'Confirm-SetupChoice', 'Backup-SetupFile',
     'Set-SetupFileContent', 'Register-InstalledPackage', 'Add-RollbackNote',
     'Complete-SetupRuntime', 'ConvertTo-RedactedText', 'Get-SetupModuleDisplayName',
     'Resolve-SetupModuleChoice', 'Write-SetupWrappedText', 'Get-SetupOrderedModules',
-    'Write-SetupSectionHeader', 'Resolve-SetupCommandPath'
+    'Write-SetupSectionHeader', 'Resolve-SetupCommandPath', 'Merge-MissingSetupConfig'
 )

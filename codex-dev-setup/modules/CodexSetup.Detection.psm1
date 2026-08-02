@@ -264,6 +264,97 @@ function Get-WslInfo {
     }
 }
 
+function Get-IniFileValue {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Section,
+        [Parameter(Mandatory)][string]$Key
+    )
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
+    $currentSection = ''
+    foreach ($line in @(Get-Content -LiteralPath $Path -Encoding utf8 -ErrorAction Stop)) {
+        if ($line -match '^\s*\[([^\]]+)\]\s*(?:[;#].*)?$') {
+            $currentSection = $matches[1].Trim()
+            continue
+        }
+        if ($currentSection -ieq $Section -and $line -match ('^\s*' + [regex]::Escape($Key) + '\s*=\s*([^;#]*?)\s*(?:[;#].*)?$')) {
+            return $matches[1].Trim().Trim('"')
+        }
+    }
+    return $null
+}
+
+function ConvertTo-IniBoolean {
+    param([AllowNull()][string]$Value, [bool]$Default)
+    if ([string]::IsNullOrWhiteSpace($Value)) { return $Default }
+    return $Value -match '^(?i:true|1|yes|on)$'
+}
+
+function Get-WslNetworkInfo {
+    $path = Join-Path $env:USERPROFILE '.wslconfig'
+    try {
+        $networkingModeValue = Get-IniFileValue -Path $path -Section 'wsl2' -Key 'networkingMode'
+        $networkingMode = if ($networkingModeValue) { $networkingModeValue.ToLowerInvariant() } else { 'nat' }
+        $dnsTunneling = ConvertTo-IniBoolean (Get-IniFileValue -Path $path -Section 'wsl2' -Key 'dnsTunneling') $true
+        $autoProxy = ConvertTo-IniBoolean (Get-IniFileValue -Path $path -Section 'wsl2' -Key 'autoProxy') $true
+        $firewall = ConvertTo-IniBoolean (Get-IniFileValue -Path $path -Section 'wsl2' -Key 'firewall') $true
+        $timeoutValue = Get-IniFileValue -Path $path -Section 'experimental' -Key 'initialAutoProxyTimeout'
+        $initialAutoProxyTimeoutMs = if ($timeoutValue -match '^\d+$') { [int]$timeoutValue } else { 1000 }
+
+        $internetSettings = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -ErrorAction SilentlyContinue
+        $proxyEnabled = $null -ne $internetSettings -and
+            $internetSettings.PSObject.Properties.Name -contains 'ProxyEnable' -and [bool]$internetSettings.ProxyEnable
+        $proxyServer = if ($null -ne $internetSettings -and $internetSettings.PSObject.Properties.Name -contains 'ProxyServer') {
+            [string]$internetSettings.ProxyServer
+        } else { '' }
+        $httpPort = $null
+        $socksPort = $null
+        if ($proxyServer -match '(?i)(?:^|;)https?=(?:127\.0\.0\.1|localhost):(\d+)') { $httpPort = [int]$matches[1] }
+        elseif ($proxyServer -match '(?i)(?:127\.0\.0\.1|localhost):(\d+)') { $httpPort = [int]$matches[1] }
+        if ($proxyServer -match '(?i)(?:^|;)socks=(?:127\.0\.0\.1|localhost):(\d+)') { $socksPort = [int]$matches[1] }
+
+        $candidatePorts = @(@($httpPort, $socksPort, 10808, 10809) | Where-Object { $null -ne $_ } | Select-Object -Unique)
+        $listeners = @()
+        $wildcardListeners = @()
+        try {
+            $netTcpCommand = Get-Command 'Get-NetTCPConnection' -ErrorAction Stop
+            $allCandidateListeners = @(& $netTcpCommand -State Listen -ErrorAction Stop | Where-Object { $_.LocalPort -in $candidatePorts })
+            $listeners = @($allCandidateListeners | Where-Object { $_.LocalAddress -eq '127.0.0.1' } | Select-Object LocalAddress, LocalPort, OwningProcess)
+            $wildcardListeners = @($allCandidateListeners | Where-Object { $_.LocalAddress -in @('0.0.0.0', '::') } | Select-Object LocalAddress, LocalPort, OwningProcess)
+        }
+        catch { $listeners = @(); $wildcardListeners = @() }
+        $listeningPorts = @($listeners | ForEach-Object { [int]$_.LocalPort } | Sort-Object -Unique)
+        $recommendedHttpPort = if ($httpPort -and $httpPort -in $listeningPorts) { $httpPort } elseif (10808 -in $listeningPorts) { 10808 } elseif ($listeningPorts.Count -gt 0) { $listeningPorts[0] } else { 10808 }
+        $recommendedSocksPort = if ($socksPort -and $socksPort -in $listeningPorts) { $socksPort } elseif (10808 -in $listeningPorts) { 10808 } else { 10808 }
+
+        return [pscustomobject]@{
+            wslConfigPath=$path
+            wslConfigExists=(Test-Path -LiteralPath $path -PathType Leaf)
+            networkingMode=$networkingMode
+            mirroredConfigured=($networkingMode -eq 'mirrored')
+            dnsTunneling=$dnsTunneling
+            autoProxy=$autoProxy
+            firewall=$firewall
+            initialAutoProxyTimeoutMs=$initialAutoProxyTimeoutMs
+            windowsProxyEnabled=$proxyEnabled
+            windowsProxyServer=$proxyServer
+            loopbackListeners=$listeners
+            wildcardListeners=$wildcardListeners
+            recommendedHttpPort=$recommendedHttpPort
+            recommendedSocksPort=$recommendedSocksPort
+            error=$null
+        }
+    }
+    catch {
+        return [pscustomobject]@{
+            wslConfigPath=$path; wslConfigExists=(Test-Path -LiteralPath $path -PathType Leaf)
+            networkingMode='unknown'; mirroredConfigured=$false; dnsTunneling=$null; autoProxy=$null; firewall=$null
+            initialAutoProxyTimeoutMs=$null; windowsProxyEnabled=$false; windowsProxyServer=''; loopbackListeners=@(); wildcardListeners=@()
+            recommendedHttpPort=10808; recommendedSocksPort=10808; error=$_.Exception.Message
+        }
+    }
+}
+
 function Get-PathDiagnostics {
     $scopes = [ordered]@{
         User    = [Environment]::GetEnvironmentVariable('Path', 'User')
@@ -642,6 +733,14 @@ function Get-CodexSetupDetection {
         elseif ($value.installed) { 'WSL 可用；尚未安装 Ubuntu' }
         else { '未检测到 WSL' }
     }
+    $wslNetwork = Get-WslNetworkInfo
+    $networkSummary = if ($wslNetwork.mirroredConfigured) { 'mirrored' } else { $wslNetwork.networkingMode }
+    $proxySummary = if (@($wslNetwork.loopbackListeners).Count -gt 0) {
+        '本机代理端口 ' + (@($wslNetwork.loopbackListeners.LocalPort | Sort-Object -Unique) -join '、')
+    }
+    elseif ($wslNetwork.windowsProxyEnabled) { 'Windows 已启用系统代理，但未确认本地监听端口' }
+    else { '未检测到常见本机代理端口' }
+    Write-Host "      网络：$networkSummary；$proxySummary" -ForegroundColor DarkGray
 
     if ($DeepWsl) {
         $wslTools = Invoke-DetectionStage -Index 5 -Name '检测 WSL 工具链（可能需要 5–10 秒）' -Issues $issues -Operation {
@@ -700,6 +799,7 @@ function Get-CodexSetupDetection {
     if ($apps.terminal.error) { $issues.Add([pscustomobject]@{ stage=2; name='Windows Terminal package'; error=$apps.terminal.error; severity='Warning' }) }
     if ($apps.codex.error) { $issues.Add([pscustomobject]@{ stage=2; name='Codex Desktop package'; error=$apps.codex.error; severity='Warning' }) }
     if ($wsl.error) { $issues.Add([pscustomobject]@{ stage=4; name='WSL'; error=$wsl.error; severity='Warning' }) }
+    if ($wslNetwork.error) { $issues.Add([pscustomobject]@{ stage=4; name='WSL 网络'; error=$wslNetwork.error; severity='Warning' }) }
     if (-not $wslTools.skipped -and $wslTools.error) { $issues.Add([pscustomobject]@{ stage=5; name='WSL 工具链'; error=$wslTools.error; severity='Warning' }) }
 
     $result = [ordered]@{
@@ -720,6 +820,7 @@ function Get-CodexSetupDetection {
         uv=$tools.uv
         codexCli=$tools.codexCli
         wsl=$wsl
+        wslNetwork=$wslNetwork
         wslTools=$wslTools
         windowsSandboxFeature=$tools.windowsSandboxFeature
         path=$tools.path
@@ -744,5 +845,6 @@ function Get-CodexSetupDetection {
 Export-ModuleMember -Function @(
     'Get-CodexSetupDetection', 'Get-ProjectRecommendation', 'Invoke-CapturedCommand',
     'Get-CommandInfoSafe', 'Test-IsAppExecutionAlias', 'Get-PathDiagnostics',
-    'Get-HealthLabel', 'Get-ToolInstallationRoot', 'Get-WslToolchainInfo', 'Invoke-DetectionStage'
+    'Get-HealthLabel', 'Get-ToolInstallationRoot', 'Get-WslToolchainInfo', 'Invoke-DetectionStage',
+    'Get-WslNetworkInfo'
 )

@@ -19,6 +19,8 @@
 - 主要项目类型是 Node.js 前端与 Python；当前仓库多在 Windows 用户目录。
 - 新项目按类型建议：Windows 专属项目留在 Windows 文件系统；Web/Python/跨平台项目放 WSL `~/code`。
 - 完整检测并配置 WSL2 Ubuntu，提供可重复 Bash helper；不迁移已有仓库。
+- 可选配置 WSL mirrored networking；检测 Windows 系统代理与 loopback 端口，不自动开启 v2rayN LAN 监听或创建 LAN 入站规则。
+- 可选把代理环境持久写入 WSL 用户级 `~/.config/codex/proxy.sh`，并从 `~/.profile`、`~/.bashrc` 加载，使 Codex 独立启动的 WSL 进程可继承。
 - 检测 Windows/WSL Git、Node、Python、依赖目录、`/mnt/c` 高 I/O 和 PATH 冲突等混用风险。
 
 ## Git、终端与工具
@@ -38,7 +40,7 @@
 
 - 默认选择 `workspace-write`、Windows `unelevated` sandbox、默认联网和 live web search；完全访问与 Windows/WSL 配置共享必须由用户显式开启。
 - 默认 `approval_policy = "on-request"`，模型留空以跟随当前 Codex 默认，推理强度 high，personality pragmatic。
-- 共享 Windows `%USERPROFILE%\.codex` 到 WSL `CODEX_HOME`，但不读取其中的配置、认证和历史内容。
+- 可选共享 Windows `%USERPROFILE%\.codex` 到 WSL `CODEX_HOME`；默认关闭，脚本不读取其中的配置、认证和历史内容。
 - 第一版明确不管理 MCP、插件和技能。
 
 ## 交互、日志和回滚

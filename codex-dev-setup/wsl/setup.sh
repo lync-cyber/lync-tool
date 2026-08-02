@@ -7,6 +7,11 @@ SHARE_CODEX_HOME=""
 INSTALL_NODE=0
 INSTALL_PYTHON=0
 ROLLBACK=0
+NETWORK_ONLY=0
+PROXY_MODE="keep"
+PROXY_HOST="127.0.0.1"
+PROXY_HTTP_PORT="10808"
+PROXY_SOCKS_PORT="10808"
 SUDO_AUTH_FAILURE_EXIT=77
 SUDO_UNAVAILABLE_EXIT=78
 SHELL_MARKER_FAILURE_EXIT=79
@@ -33,6 +38,9 @@ Usage:
   setup.sh [--what-if|--apply] [--code-root ~/code]
            [--share-codex-home /mnt/c/Users/name/.codex]
            [--install-node] [--install-python] [--rollback]
+           [--network-only] [--proxy-mode keep|persistent|none]
+           [--proxy-host 127.0.0.1] [--proxy-http-port 10808]
+           [--proxy-socks-port 10808]
 
 This script never reads authentication files, tokens, SSH private keys, or .env files.
 
@@ -51,6 +59,11 @@ while [[ $# -gt 0 ]]; do
     --install-node) INSTALL_NODE=1; shift ;;
     --install-python) INSTALL_PYTHON=1; shift ;;
     --rollback) ROLLBACK=1; shift ;;
+    --network-only) NETWORK_ONLY=1; shift ;;
+    --proxy-mode) PROXY_MODE="$2"; shift 2 ;;
+    --proxy-host) PROXY_HOST="$2"; shift 2 ;;
+    --proxy-http-port) PROXY_HTTP_PORT="$2"; shift 2 ;;
+    --proxy-socks-port) PROXY_SOCKS_PORT="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
   esac
@@ -59,6 +72,14 @@ done
 START_MARKER="# >>> CodexDevSetup:WSL >>>"
 END_MARKER="# <<< CodexDevSetup:WSL <<<"
 BASHRC="$HOME/.bashrc"
+PROFILE_START_MARKER="# >>> CodexDevSetup:ProxyProfile >>>"
+PROFILE_END_MARKER="# <<< CodexDevSetup:ProxyProfile <<<"
+BASH_PROXY_START_MARKER="# >>> CodexDevSetup:ProxyBash >>>"
+BASH_PROXY_END_MARKER="# <<< CodexDevSetup:ProxyBash <<<"
+PROXY_START_MARKER="# >>> CodexDevSetup:Proxy >>>"
+PROXY_END_MARKER="# <<< CodexDevSetup:Proxy <<<"
+PROFILE="$HOME/.profile"
+PROXY_FILE="$HOME/.config/codex/proxy.sh"
 STATE_ROOT="$HOME/.local/state/codex-dev-setup"
 DETAIL_LOG=""
 
@@ -179,6 +200,73 @@ remove_managed_block() {
   ' "$source" > "$destination"
 }
 
+remove_marked_block() {
+  local source="$1" destination="$2" start_marker="$3" end_marker="$4"
+  awk -v start="$start_marker" -v end="$end_marker" '
+    $0 == start { skip=1; next }
+    $0 == end { skip=0; next }
+    !skip { print }
+  ' "$source" > "$destination"
+}
+
+validate_file_markers() {
+  local file="$1" start_marker="$2" end_marker="$3"
+  [[ -f "$file" ]] || return 0
+  local start_count end_count start_line end_line
+  start_count="$(grep -Fxc "$start_marker" "$file" || true)"
+  end_count="$(grep -Fxc "$end_marker" "$file" || true)"
+  if [[ "$start_count" -eq 0 && "$end_count" -eq 0 ]]; then return 0; fi
+  if [[ "$start_count" -ne 1 || "$end_count" -ne 1 ]]; then
+    printf '%s\n' 'CODEX_SETUP_SHELL_MARKERS_INVALID' >&2
+    say "检测到 $file 中的 Codex 管理标记不完整或重复；本次未修改该文件。" >&2
+    exit "$SHELL_MARKER_FAILURE_EXIT"
+  fi
+  start_line="$(grep -Fnx "$start_marker" "$file" | cut -d: -f1)"
+  end_line="$(grep -Fnx "$end_marker" "$file" | cut -d: -f1)"
+  if [[ "$start_line" -ge "$end_line" ]]; then
+    printf '%s\n' 'CODEX_SETUP_SHELL_MARKERS_INVALID' >&2
+    say "检测到 $file 中的 Codex 管理标记顺序异常；本次未修改该文件。" >&2
+    exit "$SHELL_MARKER_FAILURE_EXIT"
+  fi
+}
+
+remove_managed_proxy_settings() {
+  local managed_file managed_start managed_end tmp should_remove
+  for managed_file in "$BASHRC" "$PROFILE" "$PROXY_FILE"; do
+    if [[ "$managed_file" == "$BASHRC" ]]; then
+      managed_start="$BASH_PROXY_START_MARKER"; managed_end="$BASH_PROXY_END_MARKER"
+    elif [[ "$managed_file" == "$PROFILE" ]]; then
+      managed_start="$PROFILE_START_MARKER"; managed_end="$PROFILE_END_MARKER"
+    else
+      managed_start="$PROXY_START_MARKER"; managed_end="$PROXY_END_MARKER"
+    fi
+    should_remove=0
+    if [[ -f "$managed_file" ]] && grep -Fq "$managed_start" "$managed_file"; then
+      should_remove=1
+    elif [[ "$managed_file" == "$BASHRC" ]] && [[ -f "$managed_file" ]] && grep -Fq '.config/codex/proxy.sh' "$managed_file"; then
+      should_remove=1
+    fi
+    if [[ "$should_remove" -eq 1 ]]; then
+      tmp="$(mktemp)"
+      register_temp_file "$tmp"
+      remove_marked_block "$managed_file" "$tmp" "$managed_start" "$managed_end"
+      if [[ "$managed_file" == "$BASHRC" ]]; then
+        awk '$0 != "[ -f \"$HOME/.config/codex/proxy.sh\" ] && . \"$HOME/.config/codex/proxy.sh\"" { print }' "$tmp" > "${tmp}.clean"
+        mv -- "${tmp}.clean" "$tmp"
+      fi
+      if [[ "$MODE" == "what-if" ]]; then
+        say "预览：将从 $managed_file 删除由本工具管理的代理设置。"
+      else
+        mkdir -p "$STATE_ROOT"
+        cp "$managed_file" "$STATE_ROOT/$(basename "$managed_file")-before-proxy-remove-$(date +%Y%m%d-%H%M%S)"
+        chmod --reference="$managed_file" "$tmp"
+        mv -- "$tmp" "$managed_file"
+        say "已关闭本工具在 $managed_file 中管理的持久代理。"
+      fi
+    fi
+  done
+}
+
 extract_managed_block() {
   local source="$1"
   awk -v start="$START_MARKER" -v end="$END_MARKER" '
@@ -213,8 +301,30 @@ validate_managed_markers() {
 # Validate before installing anything. If a previous managed block was edited
 # manually, abort cleanly instead of accidentally removing unrelated .bashrc text.
 validate_managed_markers
+validate_file_markers "$BASHRC" "$BASH_PROXY_START_MARKER" "$BASH_PROXY_END_MARKER"
+validate_file_markers "$PROFILE" "$PROFILE_START_MARKER" "$PROFILE_END_MARKER"
+validate_file_markers "$PROXY_FILE" "$PROXY_START_MARKER" "$PROXY_END_MARKER"
+
+# Reject invalid proxy input before creating backups, state directories, or shell files.
+if [[ "$PROXY_MODE" != "keep" && "$PROXY_MODE" != "persistent" && "$PROXY_MODE" != "none" ]]; then
+  say "不支持的代理模式：$PROXY_MODE" >&2
+  exit 2
+fi
+if [[ "$PROXY_MODE" == "persistent" ]]; then
+  for port_value in "$PROXY_HTTP_PORT" "$PROXY_SOCKS_PORT"; do
+    if [[ ! "$port_value" =~ ^[0-9]+$ ]] || [[ "$port_value" -lt 1 ]] || [[ "$port_value" -gt 65535 ]]; then
+      say "代理端口无效：$port_value" >&2
+      exit 2
+    fi
+  done
+  if [[ "$PROXY_HOST" != "127.0.0.1" ]]; then
+    say 'mirrored 模式只自动配置 127.0.0.1，避免意外使用或暴露 LAN 代理。' >&2
+    exit 2
+  fi
+fi
 
 if [[ "$ROLLBACK" -eq 1 ]]; then
+  if [[ "$NETWORK_ONLY" -eq 0 ]]; then
   if [[ -f "$BASHRC" ]] && grep -Fq "$START_MARKER" "$BASHRC"; then
     tmp="$(mktemp "${BASHRC}.codex-setup.XXXXXX")"
     register_temp_file "$tmp"
@@ -232,9 +342,12 @@ if [[ "$ROLLBACK" -eq 1 ]]; then
   else
     say '没有找到由本工具管理的终端设置，无需回滚。'
   fi
+  fi
+  remove_managed_proxy_settings
   exit 0
 fi
 
+if [[ "$NETWORK_ONLY" -eq 0 ]]; then
 stage '开始准备 Linux 开发环境'
 say "项目目录：$CODE_ROOT"
 
@@ -324,7 +437,14 @@ if [[ "$INSTALL_PYTHON" -eq 1 ]] && ! command -v uv >/dev/null 2>&1; then
     say 'Python 管理工具已准备好。'
   fi
 fi
+fi
 
+effective_proxy_mode="$PROXY_MODE"
+if [[ "$PROXY_MODE" == "keep" ]] && { [[ -f "$PROXY_FILE" ]] || { [[ -f "$BASHRC" ]] && grep -Fq '.config/codex/proxy.sh' "$BASHRC"; } || { [[ -f "$PROFILE" ]] && grep -Fq '.config/codex/proxy.sh' "$PROFILE"; }; }; then
+  effective_proxy_mode="persistent"
+fi
+
+if [[ "$NETWORK_ONLY" -eq 0 ]]; then
 block_file="$(mktemp)"
 register_temp_file "$block_file"
 {
@@ -335,6 +455,9 @@ register_temp_file "$block_file"
   printf '%s\n' 'alias gdf="git diff"'
   if [[ -n "$SHARE_CODEX_HOME" ]]; then
     printf 'export CODEX_HOME=%q\n' "$SHARE_CODEX_HOME"
+  fi
+  if [[ "$PROXY_MODE" == "keep" && "$effective_proxy_mode" == "persistent" ]] && { [[ ! -f "$BASHRC" ]] || ! grep -Fq "$BASH_PROXY_START_MARKER" "$BASHRC"; }; then
+    printf '%s\n' '[ -f "$HOME/.config/codex/proxy.sh" ] && . "$HOME/.config/codex/proxy.sh"'
   fi
   printf '%s\n' "$END_MARKER"
 } > "$block_file"
@@ -375,8 +498,100 @@ else
   mv -- "$bashrc_tmp" "$BASHRC"
 fi
 rm -f "$block_file" "$existing_file"
+fi
 
-if [[ "$MODE" == "apply" ]] && [[ "$INSTALL_NODE" -eq 1 ]]; then
+if [[ "$PROXY_MODE" == "none" ]]; then
+  remove_managed_proxy_settings
+fi
+
+if [[ "$PROXY_MODE" == "persistent" ]]; then
+  proxy_existing="$(mktemp)"; register_temp_file "$proxy_existing"
+  if [[ -f "$PROXY_FILE" ]]; then
+    remove_marked_block "$PROXY_FILE" "$proxy_existing" "$PROXY_START_MARKER" "$PROXY_END_MARKER"
+  else
+    : > "$proxy_existing"
+  fi
+  proxy_tmp="$(mktemp)"; register_temp_file "$proxy_tmp"
+  {
+    sed '${/^$/d;}' "$proxy_existing"
+    printf '\n%s\n' "$PROXY_START_MARKER"
+    printf '%s\n' "proxy_on() {"
+    printf '  local host="${1:-%s}" http_port="${2:-%s}" socks_port="${3:-%s}"\n' "$PROXY_HOST" "$PROXY_HTTP_PORT" "$PROXY_SOCKS_PORT"
+    printf '%s\n' '  export http_proxy="http://${host}:${http_port}"' '  export https_proxy="$http_proxy"' '  export HTTP_PROXY="$http_proxy"' '  export HTTPS_PROXY="$https_proxy"'
+    printf '%s\n' '  export all_proxy="socks5h://${host}:${socks_port}"' '  export ALL_PROXY="$all_proxy"'
+    printf '%s\n' '  export no_proxy="localhost,127.0.0.1,::1,.local"' '  export NO_PROXY="$no_proxy"' '}'
+    printf '%s\n' 'proxy_off() {' '  unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY no_proxy NO_PROXY' '}'
+    printf '%s\n' 'proxy_status() {' "  env | grep -iE '^(http|https|all|no)_proxy=' || true" '}'
+    printf 'proxy_on %q %q %q\n' "$PROXY_HOST" "$PROXY_HTTP_PORT" "$PROXY_SOCKS_PORT"
+    printf '%s\n' "$PROXY_END_MARKER"
+  } > "$proxy_tmp"
+  if [[ -f "$PROXY_FILE" ]] && cmp -s "$proxy_tmp" "$PROXY_FILE"; then
+    say "Codex 持久代理文件已符合当前端口，无需重写：$PROXY_FILE"
+    rm -f "$proxy_tmp"
+  elif [[ "$MODE" == "apply" ]]; then
+    mkdir -p "$STATE_ROOT" "$(dirname "$PROXY_FILE")"
+    [[ -f "$PROXY_FILE" ]] && cp "$PROXY_FILE" "$STATE_ROOT/proxy.sh-$(date +%Y%m%d-%H%M%S).bak"
+    chmod 600 "$proxy_tmp"
+    mv -- "$proxy_tmp" "$PROXY_FILE"
+  else
+    say "预览：将生成 $PROXY_FILE（HTTP $PROXY_HTTP_PORT，SOCKS $PROXY_SOCKS_PORT）。"
+  fi
+
+  profile_existing="$(mktemp)"; register_temp_file "$profile_existing"
+  if [[ -f "$PROFILE" ]]; then
+    remove_marked_block "$PROFILE" "$profile_existing" "$PROFILE_START_MARKER" "$PROFILE_END_MARKER"
+  else
+    : > "$profile_existing"
+  fi
+  profile_tmp="$(mktemp)"; register_temp_file "$profile_tmp"
+  {
+    sed '${/^$/d;}' "$profile_existing"
+    printf '\n%s\n' "$PROFILE_START_MARKER"
+    printf '%s\n' '[ -f "$HOME/.config/codex/proxy.sh" ] && . "$HOME/.config/codex/proxy.sh"'
+    printf '%s\n' "$PROFILE_END_MARKER"
+  } > "$profile_tmp"
+  if [[ -f "$PROFILE" ]] && cmp -s "$profile_tmp" "$PROFILE"; then
+    say "登录 shell 已加载 Codex 代理文件，无需重写：$PROFILE"
+    rm -f "$profile_tmp"
+  elif [[ "$MODE" == "apply" ]]; then
+    mkdir -p "$STATE_ROOT"
+    [[ -f "$PROFILE" ]] && cp "$PROFILE" "$STATE_ROOT/profile-$(date +%Y%m%d-%H%M%S).bak"
+    [[ -f "$PROFILE" ]] && chmod --reference="$PROFILE" "$profile_tmp"
+    mv -- "$profile_tmp" "$PROFILE"
+  else
+    say "预览：将在 $PROFILE 中加载 Codex 代理文件。"
+  fi
+
+  bash_proxy_existing="$(mktemp)"; register_temp_file "$bash_proxy_existing"
+  if [[ -f "$BASHRC" ]]; then
+    remove_marked_block "$BASHRC" "$bash_proxy_existing" "$BASH_PROXY_START_MARKER" "$BASH_PROXY_END_MARKER"
+  else
+    : > "$bash_proxy_existing"
+  fi
+  # Migrate the loader from the legacy general block without touching other shell settings.
+  awk '$0 != "[ -f \"$HOME/.config/codex/proxy.sh\" ] && . \"$HOME/.config/codex/proxy.sh\"" { print }' "$bash_proxy_existing" > "${bash_proxy_existing}.clean"
+  mv -- "${bash_proxy_existing}.clean" "$bash_proxy_existing"
+  bash_proxy_tmp="$(mktemp)"; register_temp_file "$bash_proxy_tmp"
+  {
+    sed '${/^$/d;}' "$bash_proxy_existing"
+    printf '\n%s\n' "$BASH_PROXY_START_MARKER"
+    printf '%s\n' '[ -f "$HOME/.config/codex/proxy.sh" ] && . "$HOME/.config/codex/proxy.sh"'
+    printf '%s\n' "$BASH_PROXY_END_MARKER"
+  } > "$bash_proxy_tmp"
+  if [[ -f "$BASHRC" ]] && cmp -s "$bash_proxy_tmp" "$BASHRC"; then
+    say "交互 shell 已加载 Codex 代理文件，无需重写：$BASHRC"
+    rm -f "$bash_proxy_tmp"
+  elif [[ "$MODE" == "apply" ]]; then
+    mkdir -p "$STATE_ROOT"
+    [[ -f "$BASHRC" ]] && cp "$BASHRC" "$STATE_ROOT/bashrc-before-proxy-$(date +%Y%m%d-%H%M%S).bak"
+    [[ -f "$BASHRC" ]] && chmod --reference="$BASHRC" "$bash_proxy_tmp"
+    mv -- "$bash_proxy_tmp" "$BASHRC"
+  else
+    say "预览：将在 $BASHRC 中加载 Codex 代理文件。"
+  fi
+fi
+
+if [[ "$NETWORK_ONLY" -eq 0 ]] && [[ "$MODE" == "apply" ]] && [[ "$INSTALL_NODE" -eq 1 ]]; then
   export PATH="$HOME/.local/bin:$HOME/.local/share/fnm:$PATH"
   if command -v fnm >/dev/null 2>&1; then
     eval "$(fnm env --shell bash)"
@@ -386,7 +601,7 @@ if [[ "$MODE" == "apply" ]] && [[ "$INSTALL_NODE" -eq 1 ]]; then
   fi
 fi
 
-if [[ "$MODE" == "apply" ]] && [[ "$INSTALL_PYTHON" -eq 1 ]]; then
+if [[ "$NETWORK_ONLY" -eq 0 ]] && [[ "$MODE" == "apply" ]] && [[ "$INSTALL_PYTHON" -eq 1 ]]; then
   export PATH="$HOME/.local/bin:$PATH"
   if command -v uv >/dev/null 2>&1; then
     run_quiet_with_progress '正在准备 Python' uv python install
