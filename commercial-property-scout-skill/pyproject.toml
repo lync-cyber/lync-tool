@@ -1,0 +1,19 @@
+[project]
+name = "commercial-property-scout"
+version = "0.3.0"
+description = "Reusable commercial property search, verification, scoring, visit planning, and HTML reporting skill utilities."
+requires-python = ">=3.11"
+dependencies = [
+  "beautifulsoup4>=4.12,<5",
+  "lxml>=5,<7",
+  "openpyxl>=3.1,<4",
+  "pandas>=2.2,<3.1",
+]
+
+[tool.uv]
+package = false
+
+[dependency-groups]
+dev = [
+    "pyyaml>=6,<7",
+]

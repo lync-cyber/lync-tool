@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>{{report_title}}</title>
+<style>
+:root{font-family:Inter,"PingFang SC","Microsoft YaHei",sans-serif;color:#253047;background:#eef2f6;--line:#dce3eb;--muted:#667085;--panel:#fff;--accent:#155eef;--ink:#101828;--navy:#172b4d}
+*{box-sizing:border-box}body{margin:0;line-height:1.6}.wrap{max-width:1240px;margin:auto;padding:28px}.hero{padding:32px;border-radius:22px;background:linear-gradient(135deg,#11284a,#1c4f84);color:#fff;box-shadow:0 18px 45px rgba(23,43,77,.18)}.hero h1{margin:0 0 8px;font-size:34px;color:#fff}.hero .muted{color:#d8e5f4}.muted{color:var(--muted)}
+.card,.mini{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:22px;margin:18px 0;box-shadow:0 4px 16px rgba(16,24,40,.045)}
+h1,h2,h3,h4{color:var(--ink)}h2{margin:0 0 16px;font-size:23px}h3{margin-top:18px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}.tag{display:inline-block;border:1px solid #cfd7e3;border-radius:999px;padding:3px 9px;margin:2px;font-size:12px;background:#f8fafc}.warn{border-color:#f4b740;background:#fff8e8;color:#7a4b00}.risk{border-color:#ef9a9a;background:#fff1f1;color:#9b1c1c}.good{border-color:#6bc7a3;background:#ecfdf5;color:#076b4b}
+.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:12px;background:#fff}table{width:100%;border-collapse:collapse;background:#fff;font-size:14px}th,td{padding:10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;white-space:nowrap}th{position:sticky;top:0;background:#f9fafb;z-index:1}.kv th{position:static;width:160px}.kv td,.wrap-cell{white-space:normal;min-width:220px}
+.gallery{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;margin:14px 0}.gallery figure{margin:0}.gallery img{width:100%;height:170px;object-fit:cover;border-radius:9px;border:1px solid var(--line);background:#f3f4f6}.gallery figcaption{font-size:12px;color:var(--muted);padding-top:4px}.img-kind{font-size:11px;border:1px solid var(--line);border-radius:5px;padding:1px 4px;margin-right:4px;color:#374151}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}.property-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.property-head h3{margin:0}.metrics{display:grid;grid-template-columns:repeat(5,minmax(110px,1fr));gap:8px;margin:14px 0}.metrics div{border:1px solid var(--line);border-radius:12px;padding:12px;background:#f8fafc}.metrics b{display:block;font-size:17px;color:var(--ink)}.metrics span{font-size:12px;color:var(--muted)}
+.checklist{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:8px}.checklist label{border-bottom:1px dashed var(--line);padding:8px 2px}.toc{display:flex;gap:8px;flex-wrap:wrap}.toc a{border:1px solid var(--line);background:#fff;border-radius:8px;padding:6px 10px;font-size:13px}code{white-space:normal;word-break:break-word}
+.decision-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:16px}.decision-card{border:1px solid var(--line);border-radius:16px;padding:18px;background:linear-gradient(180deg,#fff,#f8fbff)}.decision-card h3{margin:4px 0 8px}.eyebrow{font-size:12px;font-weight:700;color:#155eef;text-transform:uppercase;letter-spacing:.03em}.decision-cost strong{display:block;font-size:28px;color:#0b6b4f}.decision-cost small{display:block;color:var(--muted)}.gap{font-size:13px;border-top:1px solid var(--line);padding-top:10px}.notice{border-left:4px solid #f4b740;background:#fff9e8;padding:14px 16px;border-radius:10px}.risk-note{border-left-color:#e34d59;background:#fff3f4}.audit-fold{margin-top:14px}.audit-fold summary{cursor:pointer;font-weight:700;color:#155eef;padding:12px 2px}.property{border-left:4px solid #f4b740}.mini p{margin:.45em 0}
+@media(max-width:720px){.wrap{padding:14px}.hero h1{font-size:24px}.property-head{display:block}.metrics{grid-template-columns:repeat(2,1fr)}th,td{padding:8px}.gallery img{height:150px}}
+@media(max-width:900px){.decision-grid{grid-template-columns:1fr}.hero{padding:24px}}
+@media print{body{background:#fff}.wrap{max-width:none;padding:0}.card,.mini{box-shadow:none;break-inside:avoid}.no-print{display:none}.table-wrap{overflow:visible}th{position:static}a{color:#111;text-decoration:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header class="hero">
+<h1>{{report_title}}</h1>
+<p class="muted">生成时间：{{generated_at}} ｜ 数据抓取截止：{{data_cutoff}}</p>
+<p>{{report_status}}</p>
+<nav class="toc no-print"><a href="#summary">结论</a><a href="#brief">需求</a><a href="#profile">数据概况</a><a href="#sources">来源访问</a><a href="#collection">搜索深度</a><a href="#market">市场校准</a><a href="#shortlist-section">候选表</a><a href="#properties">房源详情</a><a href="#verification">核验</a><a href="#compliance">用途与合规</a><a href="#visits">踩点</a></nav>
+</header>
+<section class="card" id="summary"><h2>结论摘要</h2>{{executive_summary}}</section>
+<section class="card" id="brief"><h2>需求与假设</h2>{{search_brief}}</section>
+<section class="card" id="profile"><h2>数据概况</h2>{{dataset_profile}}</section>
+<section class="card" id="sources"><h2>来源访问审计</h2>{{source_plan}}</section>
+<section class="card" id="collection"><h2>搜索深度与区域防偏</h2>{{collection_coverage}}</section>
+<section class="card" id="market"><h2>市场价格校准</h2>{{market_calibration}}</section>
+<section class="card" id="shortlist-section"><h2>候选总表</h2>{{shortlist_table}}</section>
+<section id="properties"><h2>房源详情</h2>{{property_cards}}</section>
+<section class="card" id="verification"><h2>交叉核验</h2>{{verification_matrix}}<h3>价格异常</h3>{{price_anomalies}}</section>
+<section class="card" id="compliance"><h2>用途、运营与合规核验</h2>{{verification_context}}</section>
+<section class="card"><h2>近似但被排除</h2>{{near_misses}}</section>
+<section class="card"><h2>补充线索（不占主候选）</h2>{{supplementary_leads}}</section>
+<section class="card" id="visits"><h2>踩点计划</h2>{{site_visit_plan}}</section>
+<section class="card"><h2>现场核验清单</h2>{{field_checklist}}</section>
+<section class="card"><h2>方法与限制</h2>{{methodology}}</section>
+</div>
+</body>
+</html>
