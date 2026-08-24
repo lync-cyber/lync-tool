@@ -19,7 +19,7 @@
 - `config/defaults.json` 是严格的 schema v2，默认模式和发行版正确；
 - v1 策略字段、跨环境共享、项目级个人 `config.toml` 模板和双运行时包残留不存在；
 - Windows/WSL 全局指令模板与项目命令模板包含必需约束；
-- `wsl/verify.sh` 在当前 WSL 中可以验证 Linux、发行版、`/home` 路径和 Linux 原生命令。
+- `wsl/verify.sh` 在当前 WSL 中可以验证 Linux、发行版、`/home` 路径、Linux 原生命令、默认 `rg` 路径和 uv 管理的 Python 3.12。
 
 该脚本不调用 PowerShell、`wsl.exe`、Git Bash 或 Windows 可执行文件。
 
@@ -84,4 +84,4 @@ Preflight 固定验收配置哈希、仓库 commit、工作树内容哈希和 Wi
 codex-env-check --json
 ```
 
-只有新 Agent 和新 integrated terminal 的两份 JSON 都确认 Linux、`Ubuntu-24.04`、Bash、`/home` 工作目录以及 Git/Codex/`pwsh`/Node/pnpm/Python/uv 等 Linux 原生路径，并且操作员明确确认 GUI 场景与证据来源后，才能签署人工 attestation。设置截图、打开 Settings 或 JSON 文件本身都不能提供 GUI 来源的机器证明。
+只有新 Agent 和新 integrated terminal 的两份 JSON 都确认 Linux、`Ubuntu-24.04`、Bash、`/home` 工作目录，Git/Codex/`pwsh`/Node/pnpm/Python/uv/`rg` 等命令均为 Linux 原生路径，并且 `uv python find --managed-python --no-project 3.12` 返回 `uv python dir` 下的真实 3.12 解释器，操作员再明确确认 GUI 场景与证据来源后，才能签署人工 attestation。设置截图、打开 Settings 或 JSON 文件本身都不能提供 GUI 来源的机器证明。

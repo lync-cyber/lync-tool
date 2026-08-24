@@ -20,6 +20,8 @@ Assert-Contract ($text.Contains('initialApplyStartedAt')) 'Initial mutating Appl
 Assert-Contract ($text.Contains("'final-reapply-baseline.json'")) 'Final reapply lacks an independent baseline artifact.'
 Assert-Contract ($text.Contains('managedFilesMatchFinalApply=$managedFilesReady')) 'Report does not revalidate managed files.'
 Assert-Contract ($text.Contains('baselinePackagesPreserved=$baselinePackagesPreserved')) 'Report does not revalidate package safety.'
+Assert-Contract ($text.Contains("'command:rg'")) 'Desktop evidence does not require Linux-native rg.'
+Assert-Contract ($text.Contains("'python:uv-managed-3.12'")) 'Desktop evidence does not require uv-managed Python 3.12.'
 Assert-Contract (-not $text.Contains('contentMachineVerified=$true')) 'GUI screenshot content must not be reported as machine verified.'
 
 Write-Host 'PASS: Windows acceptance integrity, attestation, freshness, and final-state contracts'

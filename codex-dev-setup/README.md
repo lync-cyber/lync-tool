@@ -47,7 +47,7 @@ WSL helper 在 Ubuntu 24.04 中完成以下工作：
 - 安装 uv 与由 uv 管理的 Python 3.12；
 - 从 Microsoft Ubuntu 软件源安装 Linux 原生 `pwsh`；
 - 安装 Linux 版 Codex CLI；
-- 写入幂等的 Bash PATH 区块和 WSL Git 基线；
+- 写入幂等的 Bash PATH 区块和 WSL Git 基线，并让 Linux 用户目录与系统目录优先于继承的 Windows PATH；
 - 安装 `codex-env-check` 环境验收命令。
 
 交互式 Apply 仅在缺少 Ubuntu 系统包时让 Linux 原生 `sudo` 直接提示输入密码；脚本不会接收、缓存、输出或写入该密码。无人值守 Apply 不读取 `.env`，没有 passwordless sudo 时会停止并给出明确处理方式。
@@ -103,7 +103,7 @@ project/
 
 1. Windows/WSL 组件与版本；
 2. `Ubuntu-24.04`、WSL2 与 `/home` 项目路径；
-3. Git、Codex CLI、`pwsh`、Node、npm、pnpm、Python、uv、fnm 等命令均为 Linux 原生路径；
+3. Git、Codex CLI、`pwsh`、Node、npm、pnpm、Python、uv、fnm、`rg` 等命令均为 Linux 原生路径，且 Python 3.12 确实由 uv 管理；
 4. Desktop 的 Agent environment 与 integrated terminal 由用户完成设置并重启；
 5. 重启后的真实 WSL Agent 运行 `codex-env-check`；
 6. 项目使用 `AGENTS.md` 中的稳定命令完成检查。

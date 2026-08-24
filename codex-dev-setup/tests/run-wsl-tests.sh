@@ -88,6 +88,14 @@ pass "instruction template layering"
 
 "$RG_BIN" -q 'https://chatgpt.com/codex/install.sh' wsl/setup.sh || fail "official Codex CLI installer is not wired"
 "$RG_BIN" -q 'https://get.pnpm.io/install.sh' wsl/setup.sh || fail "official pnpm installer is not wired"
+"$RG_BIN" -Fq -- '--command %q --command %q --command %q' wsl/setup.sh || fail "WSL verifier does not require rg"
+"$RG_BIN" -Fq -- '--uv-managed-python %q' wsl/setup.sh || fail "WSL verifier does not require uv-managed Python"
+"$RG_BIN" -Fq '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH' wsl/setup.sh || \
+  fail "Linux system paths do not take precedence over inherited Windows paths"
+"$RG_BIN" -Fq "requiredCommandNames.Add('rg')" modules/CodexSetup.Detection.psm1 || \
+  fail "deep WSL detection does not require Linux-native rg"
+"$RG_BIN" -Fq 'state:uvManagedPython=ready' modules/CodexSetup.Detection.psm1 || \
+  fail "deep WSL detection does not verify uv-managed Python"
 "$RG_BIN" -q 'core.autocrlf' wsl/setup.sh || fail "WSL Git baseline is not wired"
 "$RG_BIN" -q 'AGENTS' wsl/setup.sh || fail "WSL global instructions are not wired"
 "$RG_BIN" -q 'packages.microsoft.com/config/ubuntu' wsl/setup.sh || fail "Microsoft PowerShell repository is not wired"
@@ -184,7 +192,8 @@ jq -e '
   .expectedDistro == "Ubuntu-24.04" and .currentDistro == "Ubuntu-24.04" and
   (.codeRoot | startswith("/home/")) and (.codeRoot as $root | .workingDirectory | startswith($root)) and
   (.checks | type == "array" and length >= 7) and
-  any(.checks[]; .id == "command:pwsh" and .status == "PASS")
+  any(.checks[]; .id == "command:pwsh" and .status == "PASS") and
+  any(.checks[]; .id == "command:rg" and .status == "PASS" and .detail == "/usr/bin/rg")
 ' <<<"$wrapper_json" >/dev/null || fail "codex-env-check did not forward --json"
 pass "WSL fail-fast configuration and file permissions"
 
@@ -206,6 +215,68 @@ verifier_json=$(wsl/verify.sh \
   --command jq)
 jq -e '.schemaVersion == 2 and .verdict == "PASS" and .failureCount == 0' <<<"$verifier_json" >/dev/null || \
   fail "verifier JSON mode is not machine-readable"
+
+VERIFIER_HOME="$TEST_HOME/verifier-native"
+VERIFIER_BIN="$VERIFIER_HOME/.local/bin"
+VERIFIER_MANAGED_ROOT="$VERIFIER_HOME/.local/share/uv/python"
+VERIFIER_PYTHON="$VERIFIER_MANAGED_ROOT/cpython-3.12-test/bin/python3.12"
+mkdir -p "$VERIFIER_BIN" "$(dirname -- "$VERIFIER_PYTHON")"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$VERIFIER_BIN/rg"
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'if [[ $1 == python && $2 == dir ]]; then' \
+  '  if [[ ${FAKE_UV_MOUNTED:-0} == 1 ]]; then printf "%s\\n" /mnt/c; else printf "%s\\n" "$HOME/.local/share/uv/python"; fi' \
+  'elif [[ $1 == python && $2 == find ]]; then' \
+  '  if [[ ${FAKE_UV_MOUNTED:-0} == 1 ]]; then printf "%s\\n" /mnt/c/Windows/System32/cmd.exe; elif [[ ${FAKE_UV_OUTSIDE:-0} == 1 ]]; then printf "%s\\n" /usr/bin/python3; else printf "%s\\n" "$HOME/.local/share/uv/python/cpython-3.12-test/bin/python3.12"; fi' \
+  'else' \
+  '  exit 2' \
+  'fi' >"$VERIFIER_BIN/uv"
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'if [[ ${1:-} == -c ]]; then printf "%s\\n" 3.12; else exit 2; fi' >"$VERIFIER_PYTHON"
+chmod 0755 "$VERIFIER_BIN/rg" "$VERIFIER_BIN/uv" "$VERIFIER_PYTHON"
+
+managed_python_json=$(cd "$ROOT_DIR" && HOME="$VERIFIER_HOME" SHELL=/bin/bash PATH="$VERIFIER_BIN:/usr/bin:/bin" \
+  wsl/verify.sh --json --code-root "$ROOT_DIR" --expected-distro Ubuntu-24.04 \
+  --command rg --command uv --uv-managed-python 3.12)
+jq -e '
+  .verdict == "PASS" and
+  any(.checks[]; .id == "command:rg" and .status == "PASS") and
+  any(.checks[]; .id == "python:uv-managed-3.12" and .status == "PASS" and (.detail | startswith("/home/")))
+' <<<"$managed_python_json" >/dev/null || fail "verifier rejected a Linux rg and uv-managed Python 3.12"
+
+if outside_python_json=$(cd "$ROOT_DIR" && HOME="$VERIFIER_HOME" SHELL=/bin/bash \
+  PATH="$VERIFIER_BIN:/usr/bin:/bin" FAKE_UV_OUTSIDE=1 wsl/verify.sh --json \
+  --code-root "$ROOT_DIR" --expected-distro Ubuntu-24.04 --command rg --command uv --uv-managed-python 3.12); then
+  fail "verifier accepted a system interpreter as uv-managed Python"
+fi
+jq -e '
+  .verdict == "FAIL" and
+  any(.checks[]; .id == "python:uv-managed-3.12" and .status == "FAIL" and (.detail | contains("outside")))
+' <<<"$outside_python_json" >/dev/null || fail "verifier did not report the non-managed Python failure"
+
+if mounted_python_json=$(cd "$ROOT_DIR" && HOME="$VERIFIER_HOME" SHELL=/bin/bash \
+  PATH="$VERIFIER_BIN:/usr/bin:/bin" FAKE_UV_MOUNTED=1 wsl/verify.sh --json \
+  --code-root "$ROOT_DIR" --expected-distro Ubuntu-24.04 --command rg --command uv --uv-managed-python 3.12); then
+  fail "verifier accepted uv-managed Python from a Windows mount"
+fi
+jq -e '
+  .verdict == "FAIL" and
+  any(.checks[]; .id == "python:uv-managed-3.12" and .status == "FAIL" and (.detail | startswith("/mnt/")))
+' <<<"$mounted_python_json" >/dev/null || fail "verifier did not report the mounted uv Python path"
+
+INJECTED_BIN="$TEST_HOME/injected-path"
+mkdir -p "$INJECTED_BIN"
+[[ -x /mnt/c/Windows/System32/cmd.exe ]] || fail "Windows mount target for the rg injection test is unavailable"
+ln -s /mnt/c/Windows/System32/cmd.exe "$INJECTED_BIN/rg"
+if injected_rg_json=$(cd "$ROOT_DIR" && HOME="$VERIFIER_HOME" SHELL=/bin/bash PATH="$INJECTED_BIN:/usr/bin:/bin" \
+  wsl/verify.sh --json --code-root "$ROOT_DIR" --expected-distro Ubuntu-24.04 --command rg); then
+  fail "verifier accepted rg from an injected Windows path"
+fi
+jq -e '
+  .verdict == "FAIL" and
+  any(.checks[]; .id == "command:rg" and .status == "FAIL" and (.detail | startswith("/mnt/")))
+' <<<"$injected_rg_json" >/dev/null || fail "verifier did not report the injected rg path"
 pass "WSL environment verifier"
 
 acceptance_script=tests/windows-integration/Invoke-Windows11Acceptance.ps1
@@ -223,6 +294,8 @@ for marker in \
   'BaselineRestored' \
   'desktopEvidenceNonce' \
   'CodexDesktopChannelEvidence' \
+  'command:rg' \
+  'python:uv-managed-3.12' \
   'final-reapply.json' \
   'System.Drawing.Image' \
   'Get-WindowsPackageCatalog' \

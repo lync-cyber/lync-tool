@@ -5,6 +5,7 @@ code_root=""
 expected_distro=""
 commands=()
 json_mode=0
+uv_managed_python=""
 
 while (($# > 0)); do
   case "$1" in
@@ -20,6 +21,10 @@ while (($# > 0)); do
       commands+=("${2:?missing value for --command}")
       shift 2
       ;;
+    --uv-managed-python)
+      uv_managed_python=${2:?missing value for --uv-managed-python}
+      shift 2
+      ;;
     --json)
       json_mode=1
       shift
@@ -30,6 +35,11 @@ while (($# > 0)); do
       ;;
   esac
 done
+
+if [[ -n $uv_managed_python && ! $uv_managed_python =~ ^[0-9]+\.[0-9]+$ ]]; then
+  printf 'Invalid uv-managed Python version: %s\n' "$uv_managed_python" >&2
+  exit 2
+fi
 
 failures=0
 check_ids=()
@@ -82,6 +92,59 @@ command_is_native() {
   }
   check_detail=$resolved
   [[ $resolved != /mnt/* ]]
+}
+
+has_uv_managed_python() {
+  local requested=$1 uv_path managed_root interpreter version
+  uv_path=$(type -P -- uv) || {
+    check_detail='uv missing'
+    return 1
+  }
+  uv_path=$(readlink -f -- "$uv_path") || {
+    check_detail=$uv_path
+    return 1
+  }
+  if [[ $uv_path == /mnt/* ]]; then
+    check_detail=$uv_path
+    return 1
+  fi
+  managed_root=$(uv python dir 2>/dev/null) || {
+    check_detail='uv python dir failed'
+    return 1
+  }
+  managed_root=$(readlink -f -- "$managed_root") || {
+    check_detail=$managed_root
+    return 1
+  }
+  if [[ $managed_root == /mnt/* ]]; then
+    check_detail=$managed_root
+    return 1
+  fi
+  interpreter=$(UV_PYTHON_DOWNLOADS=never uv python find --managed-python --no-project "$requested" 2>/dev/null) || {
+    check_detail="uv-managed Python $requested missing"
+    return 1
+  }
+  interpreter=$(readlink -f -- "$interpreter") || {
+    check_detail=$interpreter
+    return 1
+  }
+  if [[ $interpreter == /mnt/* ]]; then
+    check_detail=$interpreter
+    return 1
+  fi
+  case $interpreter in
+    "$managed_root"/*) ;;
+    *)
+      check_detail="$interpreter (outside $managed_root)"
+      return 1
+      ;;
+  esac
+  version=$("$interpreter" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null) || {
+    check_detail="$interpreter (version probe failed)"
+    return 1
+  }
+  check_detail="$interpreter (uv-managed $version)"
+  [[ $version == "$requested" ]]
 }
 
 record_check() {
@@ -152,6 +215,11 @@ record_check working-directory 'Working directory is inside the code root' has_p
 for command_name in "${commands[@]}"; do
   record_check "command:$command_name" "$command_name resolves to a Linux path" command_is_native "$command_name"
 done
+
+if [[ -n $uv_managed_python ]]; then
+  record_check "python:uv-managed-$uv_managed_python" "uv manages Python $uv_managed_python" \
+    has_uv_managed_python "$uv_managed_python"
+fi
 
 if ((json_mode)); then
   emit_json

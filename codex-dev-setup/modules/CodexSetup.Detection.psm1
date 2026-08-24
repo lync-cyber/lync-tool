@@ -581,7 +581,7 @@ function Get-WslToolchainInfo {
             available=$false; distro=$distro; tools=[pscustomobject]@{}; packages=[pscustomobject]@{}
             requiredCommandNames=@(); missingRequiredCommands=@(); nonNativeCommands=@()
             aptPackagesMissing=@(); codeRootExists=$null; managedBlockReady=$null; globalAgentsReady=$null
-            codexConfigReady=$null; verifyCommandReady=$null; gitBaselinePresent=$null; readiness='Unknown'; environmentReady=$false; sudoAvailable=$null; sudoMode=$null
+            codexConfigReady=$null; verifyCommandReady=$null; gitBaselinePresent=$null; uvManagedPythonReady=$null; readiness='Unknown'; environmentReady=$false; sudoAvailable=$null; sudoMode=$null
             githubAuthStatus=$null
             error=$null; skipped=$true; reason='快速检测未启动 WSL 发行版。'
         }
@@ -592,7 +592,7 @@ function Get-WslToolchainInfo {
             available=$false; distro=$distro; tools=[pscustomobject]@{}; packages=[pscustomobject]@{}
             requiredCommandNames=@(); missingRequiredCommands=@(); nonNativeCommands=@()
             aptPackagesMissing=@(); codeRootExists=$null; managedBlockReady=$null; globalAgentsReady=$null
-            codexConfigReady=$null; verifyCommandReady=$null; gitBaselinePresent=$null; readiness='NotReady'; environmentReady=$false; sudoAvailable=$null; sudoMode=$null
+            codexConfigReady=$null; verifyCommandReady=$null; gitBaselinePresent=$null; uvManagedPythonReady=$null; readiness='NotReady'; environmentReady=$false; sudoAvailable=$null; sudoMode=$null
             githubAuthStatus=$null
             error=$null; skipped=$false; reason="没有可用的 WSL2 发行版 $distro。"
         }
@@ -607,7 +607,7 @@ function Get-WslToolchainInfo {
     $managedBlockLines = [System.Collections.Generic.List[string]]::new()
     foreach ($line in @(
         '# >>> CodexDevSetup:WSL >>>',
-        'export PATH="$HOME/.local/bin:$HOME/.local/share/fnm:$HOME/.local/share/pnpm:$PATH"',
+        'export PATH="$HOME/.local/bin:$HOME/.local/share/fnm:$HOME/.local/share/pnpm:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"',
         'fnm_path=$(command -v fnm 2>/dev/null || true)',
         'if [[ -n $fnm_path && $fnm_path != /mnt/* ]]; then eval "$(fnm env --shell bash)"; fi',
         'unset fnm_path'
@@ -618,7 +618,7 @@ function Get-WslToolchainInfo {
     $managedBlockLines.Add('# <<< CodexDevSetup:WSL <<<')
     $managedBlockHash = Get-SetupTextSha256 (($managedBlockLines -join "`n") + "`n")
     $toolScriptText = @'
-export PATH="$HOME/.local/bin:$HOME/.local/share/pnpm:$HOME/.local/share/fnm:$PATH"
+export PATH="$HOME/.local/bin:$HOME/.local/share/fnm:$HOME/.local/share/pnpm:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 if command -v fnm >/dev/null 2>&1; then
   fnm_path="$(command -v fnm)"
   case "$fnm_path" in
@@ -691,7 +691,8 @@ web_search="$7"
 check_for_update="$8"
 network_access="$9"
 verify_docker="${10}"
-shift 10
+verify_python="${11}"
+shift 11
 for package in "$@"; do
   if dpkg-query -W -f='${db:Status-Status}' "$package" 2>/dev/null | grep -qx installed; then
     version="$(dpkg-query -W -f='${Version}' "$package" 2>/dev/null || true)"
@@ -700,6 +701,32 @@ for package in "$@"; do
     printf 'package:%s=missing\n' "$package"
   fi
 done
+
+export PATH="$HOME/.local/bin:$HOME/.local/share/fnm:$HOME/.local/share/pnpm:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
+uv_managed_python_ready() {
+  local uv_path managed_root interpreter version
+  uv_path=$(command -v uv 2>/dev/null) || return 1
+  uv_path=$(readlink -f -- "$uv_path" 2>/dev/null) || return 1
+  [[ $uv_path != /mnt/* ]] || return 1
+  managed_root=$(uv python dir 2>/dev/null) || return 1
+  managed_root=$(readlink -f -- "$managed_root" 2>/dev/null) || return 1
+  [[ $managed_root != /mnt/* ]] || return 1
+  interpreter=$(UV_PYTHON_DOWNLOADS=never uv python find --managed-python --no-project 3.12 2>/dev/null) || return 1
+  interpreter=$(readlink -f -- "$interpreter" 2>/dev/null) || return 1
+  [[ $interpreter != /mnt/* ]] || return 1
+  [[ $interpreter == "$managed_root"/* ]] || return 1
+  version=$("$interpreter" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null) || return 1
+  [[ $version == 3.12 ]]
+}
+if [[ $verify_python == 1 ]]; then
+  if uv_managed_python_ready; then
+    printf 'state:uvManagedPython=ready\n'
+  else
+    printf 'state:uvManagedPython=missing\n'
+  fi
+else
+  printf 'state:uvManagedPython=not-required\n'
+fi
 
 if command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
   printf 'state:sudo=passwordless\n'
@@ -780,7 +807,9 @@ if [[ -x $verify_destination && -x $verify_wrapper \
   && $(grep -Fc -- "--code-root $code_root" "$verify_wrapper") == 1 \
   && $(grep -Fc -- "--expected-distro ${WSL_DISTRO_NAME:-}" "$verify_wrapper") == 1 \
   && $(grep -Fc -- '--command pwsh' "$verify_wrapper") == 1 \
+  && $(grep -Fc -- '--command rg' "$verify_wrapper") == 1 \
   && $(grep -Fc -- '"$@"' "$verify_wrapper") == 1 ]] \
+  && { [[ $verify_python == 0 ]] || [[ $(grep -Fc -- '--uv-managed-python 3.12' "$verify_wrapper") == 1 ]]; } \
   && { [[ $verify_docker == 0 ]] || [[ $(grep -Fc -- '--command docker' "$verify_wrapper") == 1 ]]; }; then
   printf 'state:environmentCheck=ready\n'
 else
@@ -790,6 +819,7 @@ fi
     $requiredCommandNames = [System.Collections.Generic.List[string]]::new()
     [void]$requiredCommandNames.Add('git')
     [void]$requiredCommandNames.Add('pwsh')
+    [void]$requiredCommandNames.Add('rg')
     if ($Config.toolchains.node.enabled) {
         foreach ($name in @('node', 'npm', 'fnm')) { [void]$requiredCommandNames.Add($name) }
     }
@@ -808,7 +838,8 @@ fi
         [string]$Config.codex.approvalPolicy, [string]$Config.codex.sandboxMode, [string]$Config.codex.webSearch,
         $Config.codex.checkForUpdateOnStartup.ToString().ToLowerInvariant(),
         $Config.codex.networkAccess.ToString().ToLowerInvariant(),
-        $(if ($Config.toolchains.docker.enabled) { '1' } else { '0' })
+        $(if ($Config.toolchains.docker.enabled) { '1' } else { '0' }),
+        $(if ($Config.toolchains.python.enabled) { '1' } else { '0' })
     ) + @($packageConfiguration.packageNames)
     $stateResult = Invoke-CapturedCommand -Command 'wsl.exe' -Arguments $stateArguments `
         -StandardInput $stateScriptText -TimeoutSeconds 30 -OutputEncoding ([Text.Encoding]::UTF8)
@@ -839,6 +870,8 @@ fi
     $missingRequiredCommands = @($requiredCommandNames | Where-Object {
         -not $toolValues.Contains($_) -or [string]$toolValues[$_] -in @('missing', 'unavailable', '')
     })
+    $uvManagedPythonReady = -not $Config.toolchains.python.enabled -or $stateValues['uvManagedPython'] -eq 'ready'
+    if (-not $uvManagedPythonReady) { $missingRequiredCommands += 'uv-managed-python-3.12' }
     $nonNativeCommands = @($requiredCommandNames | Where-Object {
         $toolValues.Contains($_) -and [string]$toolValues[$_] -eq 'windows-path'
     })
@@ -868,6 +901,7 @@ fi
         codexConfigReady=$codexConfigReady
         verifyCommandReady=$verifyCommandReady
         gitBaselinePresent=$gitBaselinePresent
+        uvManagedPythonReady=$uvManagedPythonReady
         readiness=$(if ($environmentReady) { 'Ready' } else { 'NotReady' })
         environmentReady=$environmentReady
         sudoAvailable=($stateValues['sudo'] -eq 'passwordless')
@@ -1087,7 +1121,7 @@ function Get-CodexSetupDetection {
                 available=$false; distro=$wsl.distribution; tools=[pscustomobject]@{}; packages=[pscustomobject]@{}
                 requiredCommandNames=@(); missingRequiredCommands=@(); nonNativeCommands=@()
                 aptPackagesMissing=@(); codeRootExists=$null; managedBlockReady=$null; globalAgentsReady=$null
-                codexConfigReady=$null; verifyCommandReady=$null; gitBaselinePresent=$null; readiness='Unknown'; environmentReady=$false; sudoAvailable=$null; sudoMode=$null
+                codexConfigReady=$null; verifyCommandReady=$null; gitBaselinePresent=$null; uvManagedPythonReady=$null; readiness='Unknown'; environmentReady=$false; sudoAvailable=$null; sudoMode=$null
                 githubAuthStatus=$null
                 error=$message; skipped=$false; reason='WSL 工具链检测失败。'
             }

@@ -406,7 +406,8 @@ function Test-VerifierEvidence {
     $checkIds = @($Evidence.checks | Where-Object status -eq 'PASS' | ForEach-Object id)
     $requiredCheckIds = @(
         'kernel', 'distro', 'shell', 'code-root', 'working-directory', 'command:git', 'command:pwsh',
-        'command:fnm', 'command:node', 'command:npm', 'command:pnpm', 'command:python3', 'command:uv', 'command:codex'
+        'command:rg', 'command:fnm', 'command:node', 'command:npm', 'command:pnpm', 'command:python3',
+        'command:uv', 'python:uv-managed-3.12', 'command:codex'
     )
     $nonNative = @($Evidence.checks | Where-Object { $_.id -like 'command:*' -and ([string]$_.detail -match '^/mnt/') })
     return @($requiredCheckIds | Where-Object { $_ -notin $checkIds }).Count -eq 0 -and

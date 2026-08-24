@@ -107,7 +107,7 @@ for alias_spec in "${command_aliases[@]}"; do
   }
 done
 
-export PATH="$HOME/.local/bin:$HOME/.local/share/fnm:$HOME/.local/share/pnpm:$PATH"
+export PATH="$HOME/.local/bin:$HOME/.local/share/fnm:$HOME/.local/share/pnpm:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 
 source /etc/os-release
 [[ ${ID:-} == ubuntu && ${VERSION_ID:-} == 24.04 ]] || {
@@ -465,7 +465,7 @@ if ((configure_git)); then
 fi
 
 stage 'Configure the WSL shell'
-shell_block='export PATH="$HOME/.local/bin:$HOME/.local/share/fnm:$HOME/.local/share/pnpm:$PATH"'
+shell_block='export PATH="$HOME/.local/bin:$HOME/.local/share/fnm:$HOME/.local/share/pnpm:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"'
 shell_block+=$'\nfnm_path=$(command -v fnm 2>/dev/null || true)'
 shell_block+=$'\nif [[ -n $fnm_path && $fnm_path != /mnt/* ]]; then eval "$(fnm env --shell bash)"; fi'
 shell_block+=$'\nunset fnm_path'
@@ -499,11 +499,11 @@ wrapper=$(mktemp)
 temp_files+=("$wrapper")
 {
   printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail'
-  printf '%s\n' 'export PATH="$HOME/.local/bin:$HOME/.local/share/fnm:$HOME/.local/share/pnpm:$PATH"'
+  printf '%s\n' 'export PATH="$HOME/.local/bin:$HOME/.local/share/fnm:$HOME/.local/share/pnpm:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"'
   printf 'exec %q --code-root %q --expected-distro %q' "$verify_destination" "$code_root" "$expected_distro"
-  printf ' --command %q --command %q' git pwsh
+  printf ' --command %q --command %q --command %q' git pwsh rg
   ((install_node)) && printf ' --command %q --command %q --command %q' fnm node npm
-  ((install_python)) && printf ' --command %q --command %q' uv python3
+  ((install_python)) && printf ' --command %q --command %q --uv-managed-python %q' uv python3 3.12
   ((install_pnpm)) && printf ' --command %q' pnpm
   ((install_codex)) && printf ' --command %q' codex
   ((verify_docker)) && printf ' --command %q' docker
