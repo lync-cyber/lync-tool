@@ -1,5 +1,0 @@
-# Project-scoped Codex settings; loaded only after this repository is trusted.
-approval_policy = "{{APPROVAL_POLICY}}"
-sandbox_mode = "{{SANDBOX_MODE}}"
-web_search = "{{WEB_SEARCH}}"
-{{WORKSPACE_NETWORK_BLOCK}}

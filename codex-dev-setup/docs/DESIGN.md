@@ -1,45 +1,82 @@
-# 主要设计说明
+# v2 设计说明
 
-## 1. 两阶段执行模型
+## 单一决策模型
 
-向导把“发现和决定”与“修改”分离：Detection 只读取环境，Planning 生成结构化 action 列表，Actions 才执行变更。`-Mode Apply` 没有 `-ApplyChanges` 时仍是 WhatIf，避免脚本被复制到另一台机器后误执行。
+配置从 `schemaVersion = 2` 开始，必须完整满足当前结构。读取器拒绝未知 schema 和缺少的必需字段，不执行 v1 字段别名、默认值合并或自动迁移。程序版本只读取仓库根目录的 `VERSION`，不在 JSON 或源文件中保存第二份版本常量。
 
-## 2. Agent 推荐规则
+`environmentMode` 决定全部下游行为：
 
-推荐器给项目标记打分：WPF、WinUI、`-windows` TargetFramework、Visual C++ 和 PowerShell module 强烈偏向 Windows native；`package.json`、`pyproject.toml`、Docker、Go、Rust 和 Makefile 偏向 WSL。文件系统位置也参与评分。推荐只生成结论与原因，不在未确认时迁移仓库或切换 Desktop。
+| 维度 | WslFirst | WindowsNative |
+|---|---|---|
+| 仓库 | WSL `/home/...` | Windows 本地路径 |
+| Agent | WSL | Windows native |
+| Terminal | WSL | PowerShell 7 |
+| Git/运行时/测试 | Linux 原生 | Windows 原生 |
+| Windows sandbox | 不适用 | `elevated` 默认 |
 
-检测分为快速和完整两种。快速检测确认 WSL 与发行版状态但不启动 Linux；完整检测才进入 Ubuntu 检查工具链。菜单会话按“项目路径 + 检测范围”缓存 5 分钟，完整结果可满足快速请求，真实写入后立即失效。
+项目探测只提供证据与冲突警告，不成为第二套隐式策略。
 
-检测使用 6 个可见阶段。非关键阶段失败时返回结构一致的 fallback 数据并继续生成部分报告；Planning 对“确认缺失”和“检测失败”分别处理，后者不会被误转成自动安装动作。
+## 阶段流水线
 
-## 3. 可重复与低侵入配置
+```text
+Detect → Plan → Confirm → Apply → Verify
+```
 
-- `config/defaults.json` 是 WSL 软件包的唯一配置入口。包组包含启用状态、用途、APT 包、探测命令和兼容别名；公共解析器统一校验、去重并生成 Detection/Planning/Actions 使用的结构。Bash helper 不内置软件清单，只消费逐项参数并再次校验。
-- Codex TOML 只更新已管理的 key，保留其他用户配置和注释；现有 `[windows]` section 被复用，不追加重复 section。
-- PowerShell 与 WSL shell 配置使用具名 marker block，重复运行会替换该区块。
-- Windows Terminal 用官方 JSON fragment 添加两个 profile，不解析或覆盖可能含 JSONC 注释的用户 `settings.json`。
-- 项目模板从 `templates/project` 渲染；内容不同时逐文件确认，拒绝时写候选文件。
+- Detect 只读系统、发行版、工具、项目标记与命令来源。
+- Plan 根据单一模式生成结构化动作，不根据缺失工具临时切换环境。
+- Confirm 对有副作用的模块给出目标、原因与边界。
+- Apply 通过 Windows action 与 WSL helper 分工执行。
+- Verify 区分机器可验证事实、Desktop 人工设置和重启后的真实 Agent 验收。
 
-## 4. 权限与网络含义
+任何非关键失败都会被记录，依赖该结果的动作停止；不会把 unknown 当作 missing 后盲目安装。
 
-`windows.sandbox = "elevated"` 选择 Windows 原生 sandbox 实现；`sandbox_mode = "danger-full-access"` 决定命令不受工作区边界限制。二者是不同维度。完全访问下网络不受 workspace sandbox 的 `network_access` 开关约束，因此脚本不写一个会造成虚假安全感的 `[sandbox_workspace_write]` 区块；只有选择 `workspace-write` 时才写该区块。
+## WslFirst 边界
 
-默认配置选择 `workspace-write`、`unelevated` 与不共享 `CODEX_HOME`。`danger-full-access`、`elevated` 和跨 Windows/WSL 的 Codex 主目录共享均属于可信项目的显式 opt-in，而非首次运行默认值。
+Windows action 负责 Windows 11、WSL2、精确发行版 `Ubuntu-24.04`、Desktop、Terminal、UI Git/gh 与可选 Docker Desktop。WSL helper 是开发工具链唯一写入入口，负责 APT 软件、Linux 原生 PowerShell 7、fnm/Node、pnpm、uv/Python 3.12、Codex CLI、Git 基线、Bash PATH、全局指令与环境检查。
 
-## 5. Node 与 Python
+WSL helper 接收由配置解析器校验的包与命令参数，脚本内部不维护第二份发行版或 Windows 工具链策略。下载型安装器先进入临时目录，再执行官方脚本。每个受管文件在覆盖前备份，重复运行只替换具名管理区块。
 
-Node 使用 fnm，项目以 `.node-version` 或 package manager metadata 锁定版本；默认安装当前 LTS，不把全局 Node 目录跨 Windows/WSL 共用。Python 使用 uv 管理解释器、虚拟环境、锁文件和运行命令，不把 `.venv` 跨操作系统共用。
+`CODEX_HOME` 不跨系统共享。Windows Desktop 和 Linux Codex CLI 拥有独立配置、认证、历史、缓存与全局 `AGENTS.md`。
 
-## 6. 日志与秘密
+网络 action 只更新 `.wslconfig` 中明确受管的 WSL2 键，并保留 CPU、内存、swap 等其他配置。代理发现和代理环境注入不属于 v2；`autoProxy` 交给 WSL 自身处理，避免形成第二套代理状态。
 
-日志仅记录 action、命令名、非秘密参数、结果、软件版本和路径；常见 token/key 形态再次经过 redaction。脚本只以收起输出的 `gh auth status` 判断 WSL 登录状态，不执行 `--show-token`、不自动登录、不修改 remote、不枚举 `.ssh` 内容、不读取 `.env`、不复制 auth 文件。共享 `CODEX_HOME` 只是写入 WSL 环境变量指针。
+## 项目命令生成
 
-PATH 诊断按安装根目录归类候选：不同安装来源才作为冲突影响健康评分；同一安装的多个入口、应用执行别名和重复 PATH 目录只作为信息展示，不自动清理。
+项目初始化使用证据优先的命令映射：
 
-## 7. 回滚边界
+1. 读取 lockfile 与 `package.json.packageManager` 确定 Node 包管理器。
+2. 仅把 `package.json.scripts` 中实际存在的 dev、test、lint、format、typecheck、check、build 写入说明。
+3. `uv.lock` 或 uv 配置存在时使用 `uv sync`；只在 `pyproject.toml` 声明对应工具时生成 pytest/ruff 命令。
+4. 无证据的命令标记为未声明，不创建推测性入口。
 
-第一次修改文件时保存一次原始副本；同次幂等重写不会制造多级备份。回滚按相反方向恢复文件，并可选择卸载本次 WinGet 软件。WSL 发行版、版本转换、Linux 包和认证状态不自动逆转，因为机械逆转可能删除用户数据；这些成为回滚清单中的人工复核项。
+模板写入 `AGENTS.md`、`.editorconfig`、`.gitattributes` 与 `.gitignore`。个人 approval、sandbox、model、web search 等策略属于用户级配置，不进入仓库模板。
 
-## 8. Desktop UI 边界
+## Desktop 人工验收
 
-官方公开文档说明 Agent 和 integrated terminal 是独立设置，但没有承诺稳定、可脚本化的本地设置文件。因此本工具不会猜测或修改 Desktop 私有状态；它生成建议、打开 `codex://settings` 并在报告中给出准确步骤。
+公开文档确认 Agent environment 与 integrated terminal 独立，但没有提供稳定的本地设置写入接口。报告因此明确区分：
+
+- 通过公开接口自动检测的系统事实；
+- 必须由用户在 Desktop Settings 完成的人工待办；
+- 重启后在新 Agent 内运行环境检查才能确认的事实。
+
+打开 Settings 或打印说明不会把状态提升为已验证。
+
+## 安全设计
+
+工作区 sandbox、approval policy、网络访问与 Windows sandbox 是不同维度。v2 默认保持 `workspace-write` 和 `on-request`；环境错误通过修正 Shell、路径和命令来源解决，不通过放宽权限解决。
+
+Windows 专属项目使用 Windows native `elevated` sandbox 默认值。它与 `danger-full-access` 不等价；后者仍是高风险显式选择。
+
+日志只记录组件、动作、非秘密参数、版本、路径和状态。认证命令不显示令牌，文件扫描不读取 `.env`、SSH 私钥或 Codex 身份数据。
+
+## Windows 真实机证据
+
+真实机验收使用可续跑的阶段状态，而不是一条跨重启的长命令。Preflight 记录 Windows、WinGet、WSL、受管文件和 Desktop 进程基线；Apply 与 PostRestart 保存结构化工作流结果；DesktopEvidence 依次验证两个负向组合和最终 WSL/WSL 组合，只接受人工设置截图、完整进程替换以及绑定 RunId、通道和本轮 nonce 的独立 JSON 环境检查。真实回滚后必须先记录人工 GUI 基线恢复，再重新 Apply；需要时再次完成 WSL shutdown/restart，最后重新提交 WSL/WSL 双通道证据。
+
+WinGet 先用精确 package ID/source 的 `list` 退出码判断存在或缺失，再用结构化 export 为已安装项绑定版本。export 中没有某项不能证明它未安装；除明确的 `NO_APPLICATIONS_FOUND` 外，查询失败一律保持 unknown 并阻止自动安装。PATH 与 Appx 命令只用于安装后的运行能力复核。WSL 状态机只接受 WSL2；WSL1 是不受支持状态，不存在转换或兼容分支。
+
+## 可回滚范围
+
+回滚清单 schema v3 绑定当前主机和 Windows 用户，并由每次运行独立、DPAPI CurrentUser 保护的密钥进行 HMAC 校验。它在首次写入前记录原文件哈希、Windows ACL 和备份，写入前记录目标哈希与 ACL，并对每一项保存回滚进度。受管文件通过同目录临时文件原子替换，覆盖前再次检查原文件没有发生竞争修改。恢复前同时检查受管目标、备份、当前哈希和 ACL；软件包恢复还要求当前版本等于本次安装版本。失败项可在解除文件锁或恢复 WinGet source 后继续，已完成项不会重复破坏。
+
+自动回滚恢复受管文件并卸载本次运行新装的 WinGet 包。WSL 发行版、APT 包、运行时、登录状态和 Desktop GUI 不进行机械删除或私有设置写入；真实机验收通过人工 GUI 恢复与最终重新 Apply 把工作站留在目标状态。

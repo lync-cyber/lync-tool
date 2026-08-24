@@ -63,8 +63,6 @@ function Test-IsAppExecutionAlias {
         return (Get-Item -LiteralPath $Path -ErrorAction Stop).Length -eq 0
     }
     catch {
-        # WindowsApps aliases can be reparse points that cannot be inspected from
-        # every security context. Their location is enough to treat them safely.
         return $true
     }
 }
@@ -93,7 +91,16 @@ function Get-CommandInfoSafe {
             probeError = $null
         }
     }
+    $allPaths = @($commands | ForEach-Object Source | Where-Object { $_ } | Select-Object -Unique)
+    $realCommands = @($commands | Where-Object { -not (Test-IsAppExecutionAlias -Path $_.Source) })
+    if ($realCommands.Count -gt 0) { $commands = $realCommands }
     $isAppExecutionAlias = Test-IsAppExecutionAlias -Path $commands[0].Source
+    if ($SkipAppExecutionAliasProbe -and $isAppExecutionAlias) {
+        return [pscustomobject]@{
+            installed=$false; version=$null; path=$commands[0].Source; allPaths=$allPaths
+            appExecutionAlias=$true; versionProbeSkipped=$true; probeError='app-execution-alias-only'
+        }
+    }
     $probeSkipped = $SkipVersionProbe -or ($SkipAppExecutionAliasProbe -and $isAppExecutionAlias)
     $probe = if ($probeSkipped) { $null } else { Invoke-CapturedCommand -Command $commands[0].Source -Arguments $VersionArguments }
     $versionLine = if ($null -ne $probe -and $probe.output) { ($probe.output -split "`r?`n" | Select-Object -First 1).Trim() } else { $null }
@@ -101,7 +108,7 @@ function Get-CommandInfoSafe {
         installed = $true
         version   = $versionLine
         path      = $commands[0].Source
-        allPaths  = @($commands | ForEach-Object Source | Where-Object { $_ } | Select-Object -Unique)
+        allPaths  = $allPaths
         appExecutionAlias = $isAppExecutionAlias
         versionProbeSkipped = $probeSkipped
         probeError = if ($null -ne $probe) { $probe.error } else { $null }
@@ -172,8 +179,6 @@ function Get-ToolInstallationRoot {
         return $matches[1].TrimEnd('\').ToLowerInvariant()
     }
     if ($Tool -eq 'codex' -and $fullPath -match '(?i)\\(?:Programs\\OpenAI\\Codex\\bin|WindowsApps\\OpenAI\.Codex_[^\\]+\\app\\resources)\\codex(?:\.exe)?$') {
-        # The Desktop bootstrap and its Store package can both expose Codex's
-        # bundled CLI. They are one product deployment, not competing CLIs.
         return 'openai-codex-desktop'
     }
     if ($fullPath -match '(?i)^(.*\\AppData\\Roaming\\npm)\\') {
@@ -201,66 +206,159 @@ function Get-WindowsInfo {
     }
 }
 
-function Get-AppxDetection {
+function Get-DetectionProperty {
     param(
-        [Parameter(Mandatory)][string]$Pattern,
-        [AllowNull()][object[]]$Packages
+        [AllowNull()]$InputObject,
+        [Parameter(Mandatory)][string[]]$Names,
+        $Default = $null
     )
-    try {
-        if ($null -eq $Packages) { $Packages = @(Get-AppxPackage -ErrorAction Stop) }
-        $matches = @($Packages | Where-Object {
-            $_.Name -match $Pattern -or $_.PackageFullName -match $Pattern
-        })
-        return [pscustomobject]@{
-            installed = $matches.Count -gt 0
-            packages = @($matches | Select-Object Name, Version, PackageFullName)
-            error = $null
+    if ($null -eq $InputObject) { return $Default }
+    foreach ($name in $Names) {
+        if ($InputObject.PSObject.Properties.Name -contains $name) {
+            return $InputObject.$name
         }
     }
-    catch {
-        return [pscustomobject]@{ installed = $false; packages = @(); error = $_.Exception.Message }
-    }
+    return $Default
 }
 
-function Get-WindowsFeatureState {
-    param([Parameter(Mandatory)][string]$FeatureName)
-    try {
-        $feature = Get-WindowsOptionalFeature -Online -FeatureName $FeatureName -ErrorAction Stop
-        return [pscustomobject]@{ state = [string]$feature.State; available = $true; error = $null }
-    }
-    catch {
-        return [pscustomobject]@{ state = 'Unknown'; available = $false; error = $_.Exception.Message }
-    }
-}
-
-function Get-WslInfo {
-    $command = Get-Command wsl.exe -ErrorAction SilentlyContinue
-    if (-not $command) {
-        return [pscustomobject]@{ installed = $false; version = $null; distros = @(); ubuntu = $false; ubuntuName = $null; ubuntuWsl2 = $false; detail = ''; error = $null }
-    }
-    $versionResult = Invoke-CapturedCommand -Command 'wsl.exe' -Arguments @('--version') -OutputEncoding ([Text.Encoding]::Unicode)
-    $listResult = Invoke-CapturedCommand -Command 'wsl.exe' -Arguments @('--list', '--verbose') -OutputEncoding ([Text.Encoding]::Unicode)
-    $quietResult = Invoke-CapturedCommand -Command 'wsl.exe' -Arguments @('--list', '--quiet') -OutputEncoding ([Text.Encoding]::Unicode)
-    $distros = if ($quietResult.exitCode -eq 0) {
-        @($quietResult.output -split "`r?`n" | ForEach-Object { $_.Trim().TrimStart('*').Trim() } | Where-Object { $_ })
-    } else { @() }
-    $ubuntuNames = @($distros | Where-Object { $_ -match '^Ubuntu(?:-|$)' })
-    $ubuntuWsl2 = $false
-    if ($ubuntuNames.Count -gt 0 -and $listResult.exitCode -eq 0) {
-        foreach ($name in $ubuntuNames) {
-            $escaped = [regex]::Escape($name)
-            if ($listResult.output -match "(?im)^\s*\*?\s*$escaped\s+\S+\s+2\s*$") { $ubuntuWsl2 = $true; break }
+function Get-WindowsPackageDetection {
+    param(
+        [Parameter(Mandatory)]$Catalog,
+        [Parameter(Mandatory)][string]$PackageId,
+        [Parameter(Mandatory)][ValidateSet('winget', 'msstore')][string]$Source
+    )
+    $catalogState = [string](Get-DetectionProperty $Catalog @('state') 'Unknown')
+    $packageStates = Get-DetectionProperty $Catalog @('packageStates')
+    $key = "$Source|$PackageId"
+    $state = Get-DetectionProperty $packageStates @($key)
+    if ($catalogState -ne 'Known' -or $null -eq $state) {
+        $catalogError = [string](Get-DetectionProperty $Catalog @('error') '')
+        $state = [pscustomobject]@{
+            state='Unknown'; installed=$false; version=$null
+            error=$(if ($catalogError) { $catalogError } else { "缺少 $key 的精确软件包查询结果。" })
         }
     }
     return [pscustomobject]@{
+        state=[string]$state.state; installed=[bool]$state.installed; packageId=$PackageId; source=$Source
+        version=$state.version; name=$null; error=$state.error
+    }
+}
+
+function Get-WslFeatureInfo {
+    $command = Get-Command Get-WindowsOptionalFeature -ErrorAction SilentlyContinue
+    if (-not $command) {
+        return [pscustomobject]@{ state='Unknown'; enabled=$null; error='无法查询 Windows WSL 可选功能。' }
+    }
+    try {
+        $feature = Get-WindowsOptionalFeature -Online -FeatureName 'Microsoft-Windows-Subsystem-Linux' -ErrorAction Stop
+        $state = [string]$feature.State
+        return [pscustomobject]@{ state=$state; enabled=($state -eq 'Enabled'); error=$null }
+    }
+    catch {
+        return [pscustomobject]@{ state='Unknown'; enabled=$null; error=$_.Exception.Message }
+    }
+}
+
+function Get-WslDefaultVersion {
+    $registryPath = 'Registry::HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Lxss'
+    try {
+        $item = Get-ItemProperty -LiteralPath $registryPath -ErrorAction Stop
+        if ($item.PSObject.Properties.Name -notcontains 'DefaultVersion') { return 2 }
+        $value = $item.DefaultVersion
+        if ([int]$value -notin @(1, 2)) { return $null }
+        return [int]$value
+    }
+    catch [System.Management.Automation.ItemNotFoundException] { return 2 }
+    catch { return $null }
+}
+
+function Get-WslInfo {
+    param([Parameter(Mandatory)][string]$Distribution)
+
+    $feature = Get-WslFeatureInfo
+    $command = Get-Command wsl.exe -ErrorAction SilentlyContinue
+    if (-not $command) {
+        $state = if ($feature.enabled -eq $false) { 'FeatureDisabled' } else { 'Unknown' }
+        return [pscustomobject]@{
+            state=$state; installed=$false; version=$null; distros=@(); distribution=$Distribution
+            defaultDistribution=$null; defaultVersion=$null; distributionInstalled=$false; distributionVersion=$null; distributionWsl2=$false
+            feature=$feature; detail=''; error=$(if ($state -eq 'Unknown') { $feature.error } else { $null })
+        }
+    }
+    if ($feature.enabled -eq $false) {
+        return [pscustomobject]@{
+            state='FeatureDisabled'; installed=$false; version=$null; distros=@(); distribution=$Distribution
+            defaultDistribution=$null; defaultVersion=$null; distributionInstalled=$false; distributionVersion=$null; distributionWsl2=$false
+            feature=$feature; detail=''; error=$null
+        }
+    }
+    $versionResult = Invoke-CapturedCommand -Command 'wsl.exe' -Arguments @('--version') -OutputEncoding ([Text.Encoding]::Unicode)
+    $defaultVersion = Get-WslDefaultVersion
+    $listResult = Invoke-CapturedCommand -Command 'wsl.exe' -Arguments @('--list', '--verbose') -OutputEncoding ([Text.Encoding]::Unicode)
+    $quietResult = Invoke-CapturedCommand -Command 'wsl.exe' -Arguments @('--list', '--quiet') -OutputEncoding ([Text.Encoding]::Unicode)
+    if ($listResult.exitCode -ne 0 -or $quietResult.exitCode -ne 0) {
+        $errors = @(
+            if ($listResult.exitCode -ne 0) { "wsl --list --verbose 退出码 $($listResult.exitCode)" }
+            if ($quietResult.exitCode -ne 0) { "wsl --list --quiet 退出码 $($quietResult.exitCode)" }
+            $listResult.error
+            $quietResult.error
+        ) | Where-Object { $_ }
+        return [pscustomobject]@{
+            state='Unknown'; installed=$true; version=($versionResult.output -split "`r?`n" | Select-Object -First 1)
+            distros=@(); distribution=$Distribution; defaultDistribution=$null; defaultVersion=$defaultVersion
+            distributionInstalled=$false; distributionVersion=$null; distributionWsl2=$false
+            feature=$feature; detail=$listResult.output
+            error=($errors -join '；')
+        }
+    }
+    $distros = if ($quietResult.exitCode -eq 0) {
+        @($quietResult.output -split "`r?`n" | ForEach-Object { $_.Trim().TrimStart('*').Trim() } | Where-Object { $_ })
+    } else { @() }
+    $distributionInstalled = $Distribution -in $distros
+    $defaultDistribution = $null
+    if ($listResult.exitCode -eq 0 -and $listResult.output -match '(?im)^\s*\*\s+(\S+)\s+\S+\s+[12]\s*$') {
+        $defaultDistribution = $matches[1]
+    }
+    $distributionVersion = $null
+    if ($distributionInstalled) {
+        $escaped = [regex]::Escape($Distribution)
+        $versionMatch = [regex]::Match($listResult.output, "(?im)^\s*\*?\s*$escaped\s+\S+\s+([12])\s*$")
+        if (-not $versionMatch.Success) {
+            return [pscustomobject]@{
+                state='Unknown'; installed=$true; version=($versionResult.output -split "`r?`n" | Select-Object -First 1)
+                distros=$distros; distribution=$Distribution; defaultDistribution=$defaultDistribution; defaultVersion=$defaultVersion
+                distributionInstalled=$true; distributionVersion=$null; distributionWsl2=$false
+                feature=$feature; detail=$listResult.output; error="无法确认 $Distribution 的 WSL 版本。"
+            }
+        }
+        $distributionVersion = [int]$versionMatch.Groups[1].Value
+    }
+    $state = if ($distros.Count -eq 0) {
+        'NoDistribution'
+    }
+    elseif (-not $distributionInstalled) {
+        'TargetMissing'
+    }
+    elseif ($distributionVersion -eq 1) {
+        'UnsupportedWsl1'
+    }
+    else {
+        'Ready'
+    }
+    return [pscustomobject]@{
+        state      = $state
         installed  = $true
         version    = ($versionResult.output -split "`r?`n" | Select-Object -First 1)
         distros    = $distros
-        ubuntu     = $ubuntuNames.Count -gt 0
-        ubuntuName = $ubuntuNames | Select-Object -First 1
-        ubuntuWsl2 = $ubuntuWsl2
+        distribution = $Distribution
+        defaultDistribution = $defaultDistribution
+        defaultVersion = $defaultVersion
+        distributionInstalled = $distributionInstalled
+        distributionVersion = $distributionVersion
+        distributionWsl2 = $distributionVersion -eq 2
+        feature     = $feature
         detail     = $listResult.output
-        error      = @($versionResult.error, $listResult.error, $quietResult.error | Where-Object { $_ }) -join '; '
+        error      = $null
     }
 }
 
@@ -272,16 +370,21 @@ function Get-IniFileValue {
     )
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
     $currentSection = ''
+    $sectionCount = 0
+    $values = [System.Collections.Generic.List[string]]::new()
     foreach ($line in @(Get-Content -LiteralPath $Path -Encoding utf8 -ErrorAction Stop)) {
         if ($line -match '^\s*\[([^\]]+)\]\s*(?:[;#].*)?$') {
             $currentSection = $matches[1].Trim()
+            if ($currentSection -ieq $Section) { $sectionCount++ }
             continue
         }
         if ($currentSection -ieq $Section -and $line -match ('^\s*' + [regex]::Escape($Key) + '\s*=\s*([^;#]*?)\s*(?:[;#].*)?$')) {
-            return $matches[1].Trim().Trim('"')
+            $values.Add($matches[1].Trim().Trim('"'))
         }
     }
-    return $null
+    if ($sectionCount -gt 1) { throw ".wslconfig 重复定义 [$Section]。" }
+    if ($values.Count -gt 1) { throw ".wslconfig 在 [$Section] 中重复定义 $Key。" }
+    return $(if ($values.Count -eq 1) { $values[0] } else { $null })
 }
 
 function ConvertTo-IniBoolean {
@@ -298,35 +401,6 @@ function Get-WslNetworkInfo {
         $dnsTunneling = ConvertTo-IniBoolean (Get-IniFileValue -Path $path -Section 'wsl2' -Key 'dnsTunneling') $true
         $autoProxy = ConvertTo-IniBoolean (Get-IniFileValue -Path $path -Section 'wsl2' -Key 'autoProxy') $true
         $firewall = ConvertTo-IniBoolean (Get-IniFileValue -Path $path -Section 'wsl2' -Key 'firewall') $true
-        $timeoutValue = Get-IniFileValue -Path $path -Section 'experimental' -Key 'initialAutoProxyTimeout'
-        $initialAutoProxyTimeoutMs = if ($timeoutValue -match '^\d+$') { [int]$timeoutValue } else { 1000 }
-
-        $internetSettings = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -ErrorAction SilentlyContinue
-        $proxyEnabled = $null -ne $internetSettings -and
-            $internetSettings.PSObject.Properties.Name -contains 'ProxyEnable' -and [bool]$internetSettings.ProxyEnable
-        $proxyServer = if ($null -ne $internetSettings -and $internetSettings.PSObject.Properties.Name -contains 'ProxyServer') {
-            [string]$internetSettings.ProxyServer
-        } else { '' }
-        $httpPort = $null
-        $socksPort = $null
-        if ($proxyServer -match '(?i)(?:^|;)https?=(?:127\.0\.0\.1|localhost):(\d+)') { $httpPort = [int]$matches[1] }
-        elseif ($proxyServer -match '(?i)(?:127\.0\.0\.1|localhost):(\d+)') { $httpPort = [int]$matches[1] }
-        if ($proxyServer -match '(?i)(?:^|;)socks=(?:127\.0\.0\.1|localhost):(\d+)') { $socksPort = [int]$matches[1] }
-
-        $candidatePorts = @(@($httpPort, $socksPort, 10808, 10809) | Where-Object { $null -ne $_ } | Select-Object -Unique)
-        $listeners = @()
-        $wildcardListeners = @()
-        try {
-            $netTcpCommand = Get-Command 'Get-NetTCPConnection' -ErrorAction Stop
-            $allCandidateListeners = @(& $netTcpCommand -State Listen -ErrorAction Stop | Where-Object { $_.LocalPort -in $candidatePorts })
-            $listeners = @($allCandidateListeners | Where-Object { $_.LocalAddress -eq '127.0.0.1' } | Select-Object LocalAddress, LocalPort, OwningProcess)
-            $wildcardListeners = @($allCandidateListeners | Where-Object { $_.LocalAddress -in @('0.0.0.0', '::') } | Select-Object LocalAddress, LocalPort, OwningProcess)
-        }
-        catch { $listeners = @(); $wildcardListeners = @() }
-        $listeningPorts = @($listeners | ForEach-Object { [int]$_.LocalPort } | Sort-Object -Unique)
-        $recommendedHttpPort = if ($httpPort -and $httpPort -in $listeningPorts) { $httpPort } elseif (10808 -in $listeningPorts) { 10808 } elseif ($listeningPorts.Count -gt 0) { $listeningPorts[0] } else { 10808 }
-        $recommendedSocksPort = if ($socksPort -and $socksPort -in $listeningPorts) { $socksPort } elseif (10808 -in $listeningPorts) { 10808 } else { 10808 }
-
         return [pscustomobject]@{
             wslConfigPath=$path
             wslConfigExists=(Test-Path -LiteralPath $path -PathType Leaf)
@@ -335,13 +409,6 @@ function Get-WslNetworkInfo {
             dnsTunneling=$dnsTunneling
             autoProxy=$autoProxy
             firewall=$firewall
-            initialAutoProxyTimeoutMs=$initialAutoProxyTimeoutMs
-            windowsProxyEnabled=$proxyEnabled
-            windowsProxyServer=$proxyServer
-            loopbackListeners=$listeners
-            wildcardListeners=$wildcardListeners
-            recommendedHttpPort=$recommendedHttpPort
-            recommendedSocksPort=$recommendedSocksPort
             error=$null
         }
     }
@@ -349,8 +416,7 @@ function Get-WslNetworkInfo {
         return [pscustomobject]@{
             wslConfigPath=$path; wslConfigExists=(Test-Path -LiteralPath $path -PathType Leaf)
             networkingMode='unknown'; mirroredConfigured=$false; dnsTunneling=$null; autoProxy=$null; firewall=$null
-            initialAutoProxyTimeoutMs=$null; windowsProxyEnabled=$false; windowsProxyServer=''; loopbackListeners=@(); wildcardListeners=@()
-            recommendedHttpPort=10808; recommendedSocksPort=10808; error=$_.Exception.Message
+            error=$_.Exception.Message
         }
     }
 }
@@ -371,15 +437,11 @@ function Get-PathDiagnostics {
             $entries += [pscustomobject]@{
                 scope = $scope; index = $index; raw = $raw.Trim(); normalized = $expanded.ToLowerInvariant()
                 remote = $isRemote
-                # A disconnected network path can make startup appear frozen. Report it
-                # separately and do not contact the remote host during a local health check.
                 exists = if ($isRemote) { $null } else { Test-Path -LiteralPath $expanded }
             }
             $index++
         }
     }
-    # Process PATH normally contains the merged User + Machine PATH. Including it in
-    # duplicate counts would report nearly every valid entry twice.
     $persistentEntries = @($entries | Where-Object scope -ne 'Process')
     $duplicates = @($persistentEntries | Group-Object normalized | Where-Object Count -gt 1 | ForEach-Object {
         [pscustomobject]@{ normalized = $_.Name; count = $_.Count; locations = @($_.Group | ForEach-Object { "$($_.scope)[$($_.index)]" }) }
@@ -388,7 +450,7 @@ function Get-PathDiagnostics {
     $conflicts = @()
     $duplicateEntrypoints = @()
     $appAliases = @()
-    foreach ($tool in @('git', 'gh', 'pwsh', 'node', 'npm', 'python', 'py', 'uv', 'fnm', 'codex')) {
+    foreach ($tool in @('git', 'gh', 'pwsh', 'rg', 'fd', 'jq', 'node', 'npm', 'pnpm', 'python', 'py', 'uv', 'fnm', 'docker', 'codex')) {
         $found = @(Get-Command $tool -All -ErrorAction SilentlyContinue | ForEach-Object Source | Where-Object { $_ } | Select-Object -Unique)
         if ($found.Count -eq 0) { continue }
         $records = @($found | ForEach-Object {
@@ -427,8 +489,6 @@ function Get-PathDiagnostics {
         conflicts = $conflicts
         duplicateEntrypoints = $duplicateEntrypoints
         appAliases = $appAliases
-        # Compatibility for older planning/reporting consumers.
-        shadowedTools = $conflicts
     }
 }
 
@@ -436,23 +496,37 @@ function Get-ProjectRecommendation {
     [CmdletBinding()]
     param(
         [AllowNull()][string]$ProjectPath,
-        [Parameter(Mandatory)][string]$WslProjects
+        [Parameter(Mandatory)][ValidateSet('WslFirst', 'WindowsNative')][string]$ConfiguredEnvironmentMode,
+        [Parameter(Mandatory)][string]$WslProjects,
+        [Parameter(Mandatory)][string]$WslDistribution
     )
 
     if ([string]::IsNullOrWhiteSpace($ProjectPath)) {
-        return [pscustomobject]@{ path = $null; exists = $false; agent = 'WSL'; terminal = 'WSL'; confidence = 'medium'; reasons = @("新建 Web/Python 项目默认推荐 Linux-native 工具链与 WSL 的 $WslProjects。") }
+        return [pscustomobject]@{
+            path=$null; exists=$false; recommendedEnvironmentMode=$ConfiguredEnvironmentMode
+            configuredEnvironmentMode=$ConfiguredEnvironmentMode
+            matchesConfiguredMode=$true
+            locationCompatible=$null
+            confidence='none'; recommendationOnly=$true; reasons=@()
+        }
     }
-    $isWslUnc = $ProjectPath -match '^\\\\wsl\$\\'
+    $isWslUnc = $ProjectPath -match '^\\\\wsl(?:\$|\.localhost)\\'
+    $escapedDistribution = [regex]::Escape($WslDistribution)
+    if ($WslProjects -ne '~/code') { throw 'WSL 项目根必须是 ~/code。' }
+    $isTargetWslHome = $ProjectPath -match "(?i)^\\\\wsl(?:\$|\.localhost)\\$escapedDistribution\\home\\[^\\]+\\code(?:\\|$)"
+    $isWindowsLocal = $ProjectPath -match '^[A-Za-z]:\\'
+    $locationCompatible = if ($ConfiguredEnvironmentMode -eq 'WslFirst') { $isTargetWslHome } else { $isWindowsLocal -and -not $isWslUnc }
     $exists = Test-Path -LiteralPath $ProjectPath
     $reasons = @()
     $windowsScore = 0
     $wslScore = 0
-    if ($isWslUnc) { $wslScore += 5; $reasons += '项目位于 WSL 文件系统。' }
-    if ($ProjectPath -match '^[A-Za-z]:\\') { $windowsScore += 2; $reasons += '项目位于 Windows 文件系统。' }
+    if ($isTargetWslHome) { $wslScore += 5; $reasons += "项目位于 $WslDistribution 的 ~/code 工作区。" }
+    elseif ($isWslUnc) { $reasons += "项目不在 $WslDistribution 的 ~/code 工作区中。" }
+    if ($isWindowsLocal) { $windowsScore += 2; $reasons += '项目位于 Windows 本地文件系统。' }
     if ($ProjectPath -match '(?i)\\(OneDrive|Dropbox|Google Drive)\\') { $reasons += '同步目录可能放大文件监听和权限摩擦。' }
 
     if ($exists) {
-        $nativePatterns = @('*.sln', '*.vcxproj', '*.wapproj', '*.psd1', '*.psm1')
+        $nativePatterns = @('*.vcxproj', '*.wapproj')
         foreach ($pattern in $nativePatterns) {
             if (Get-ChildItem -LiteralPath $ProjectPath -Filter $pattern -File -ErrorAction SilentlyContinue | Select-Object -First 1) {
                 $windowsScore += 4; $reasons += "检测到 Windows 原生项目标记 $pattern。"
@@ -473,50 +547,78 @@ function Get-ProjectRecommendation {
         }
     }
     if ($windowsScore -eq 0 -and $wslScore -eq 0) { $wslScore = 1; $reasons += '未检测到 Windows 专属标记，按跨平台项目处理。' }
-    $agent = if ($windowsScore -gt $wslScore) { 'WindowsNative' } else { 'WSL' }
+    $recommendedMode = if ($windowsScore -gt $wslScore) { 'WindowsNative' } else { 'WslFirst' }
     $confidence = if ([math]::Abs($windowsScore - $wslScore) -ge 4) { 'high' } else { 'medium' }
     return [pscustomobject]@{
-        path = $ProjectPath; exists = $exists; agent = $agent
-        terminal = if ($agent -eq 'WSL') { 'WSL' } else { 'PowerShell7' }
-        confidence = $confidence; windowsScore = $windowsScore; wslScore = $wslScore; reasons = $reasons
+        path=$ProjectPath; exists=$exists; recommendedEnvironmentMode=$recommendedMode
+        configuredEnvironmentMode=$ConfiguredEnvironmentMode
+        matchesConfiguredMode=($ConfiguredEnvironmentMode -eq $recommendedMode)
+        locationCompatible=$locationCompatible
+        confidence=$confidence; recommendationOnly=$true
+        windowsScore=$windowsScore; wslScore=$wslScore; reasons=$reasons
     }
+}
+
+function Get-SetupTextSha256 {
+    param([Parameter(Mandatory)][string]$Text)
+    $algorithm = [Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [Text.Encoding]::UTF8.GetBytes($Text)
+        return ([BitConverter]::ToString($algorithm.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant()
+    }
+    finally { $algorithm.Dispose() }
 }
 
 function Get-WslToolchainInfo {
     param(
         [AllowNull()]$WslInfo,
-        [AllowNull()]$Config,
+        [Parameter(Mandatory)]$Config,
         [switch]$Skip
     )
     if ($Skip) {
-        $distro = if ($null -ne $WslInfo) { $WslInfo.ubuntuName } else { $null }
+        $distro = if ($null -ne $WslInfo) { $WslInfo.distribution } else { [string]$Config.wsl.distribution }
         return [pscustomobject]@{
             available=$false; distro=$distro; tools=[pscustomobject]@{}; packages=[pscustomobject]@{}
-            aptPackagesMissing=@(); codeRootExists=$null; managedBlockPresent=$null; managedBlockSharesCodexHome=$null; sudoAvailable=$null
-            githubAuthStatus=$null; configuredPackageGroups=@()
+            requiredCommandNames=@(); missingRequiredCommands=@(); nonNativeCommands=@()
+            aptPackagesMissing=@(); codeRootExists=$null; managedBlockReady=$null; globalAgentsReady=$null
+            codexConfigReady=$null; verifyCommandReady=$null; gitBaselinePresent=$null; readiness='Unknown'; environmentReady=$false; sudoAvailable=$null; sudoMode=$null
+            githubAuthStatus=$null
             error=$null; skipped=$true; reason='快速检测未启动 WSL 发行版。'
         }
     }
-    if ($null -eq $WslInfo -or -not $WslInfo.ubuntuWsl2) {
+    if ($null -eq $WslInfo -or -not $WslInfo.distributionWsl2) {
+        $distro = if ($null -ne $WslInfo) { $WslInfo.distribution } else { [string]$Config.wsl.distribution }
         return [pscustomobject]@{
-            available=$false; distro=$null; tools=[pscustomobject]@{}; packages=[pscustomobject]@{}
-            aptPackagesMissing=@(); codeRootExists=$null; managedBlockPresent=$null; managedBlockSharesCodexHome=$null; sudoAvailable=$null
-            githubAuthStatus=$null; configuredPackageGroups=@()
-            error=$null; skipped=$false; reason='没有可用的 WSL2 Ubuntu。'
+            available=$false; distro=$distro; tools=[pscustomobject]@{}; packages=[pscustomobject]@{}
+            requiredCommandNames=@(); missingRequiredCommands=@(); nonNativeCommands=@()
+            aptPackagesMissing=@(); codeRootExists=$null; managedBlockReady=$null; globalAgentsReady=$null
+            codexConfigReady=$null; verifyCommandReady=$null; gitBaselinePresent=$null; readiness='NotReady'; environmentReady=$false; sudoAvailable=$null; sudoMode=$null
+            githubAuthStatus=$null
+            error=$null; skipped=$false; reason="没有可用的 WSL2 发行版 $distro。"
         }
     }
-    if ($null -eq $Config) { throw '完整 WSL 检测需要 wslEnvironment 配置。' }
     $packageConfiguration = Get-WslPackageConfiguration -Config $Config
-    $distro = $WslInfo.ubuntuName
+    $distro = $WslInfo.distribution
     $codeRoot = Resolve-WslUserPath -Distro $distro -Path ([string]$Config.paths.wslProjects)
-    # Keep this in sync with wsl/setup.sh. The additional package and shell
-    # state means planning can omit work that a WSL environment already has,
-    # rather than treating every full detection as a request to rerun apt.
+    $agentsTemplatePath = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\templates\global\AGENTS.wsl.md.template'))
+    $verifySourcePath = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\wsl\verify.sh'))
+    $globalAgentsHash = (Get-FileHash -LiteralPath $agentsTemplatePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $verifyScriptHash = (Get-FileHash -LiteralPath $verifySourcePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $managedBlockLines = [System.Collections.Generic.List[string]]::new()
+    foreach ($line in @(
+        '# >>> CodexDevSetup:WSL >>>',
+        'export PATH="$HOME/.local/bin:$HOME/.local/share/fnm:$HOME/.local/share/pnpm:$PATH"',
+        'fnm_path=$(command -v fnm 2>/dev/null || true)',
+        'if [[ -n $fnm_path && $fnm_path != /mnt/* ]]; then eval "$(fnm env --shell bash)"; fi',
+        'unset fnm_path'
+    )) { $managedBlockLines.Add($line) }
+    foreach ($alias in $packageConfiguration.aliases) {
+        $managedBlockLines.Add("alias $($alias.name)='$($alias.target)'")
+    }
+    $managedBlockLines.Add('# <<< CodexDevSetup:WSL <<<')
+    $managedBlockHash = Get-SetupTextSha256 (($managedBlockLines -join "`n") + "`n")
     $toolScriptText = @'
-# This probe runs in a non-interactive shell, where .bashrc is not loaded.
-# Include the locations managed by setup.sh and activate fnm so previously
-# installed user tools are reported accurately.
-export PATH="$HOME/.local/bin:$HOME/.local/share/fnm:$PATH"
+export PATH="$HOME/.local/bin:$HOME/.local/share/pnpm:$HOME/.local/share/fnm:$PATH"
 if command -v fnm >/dev/null 2>&1; then
   fnm_path="$(command -v fnm)"
   case "$fnm_path" in
@@ -535,8 +637,6 @@ report_tool() {
         return
         ;;
     esac
-    # A command can be visible through PATH but still be non-executable. Keep
-    # that state distinct from an installed Linux-native tool.
     if version=$("$tool" --version 2>&1); then
       version=$(printf '%s\n' "$version" | head -n 1)
       printf 'tool:%s=%s\n' "$tool" "$version"
@@ -567,11 +667,31 @@ if command -v gh >/dev/null 2>&1; then
 else
   printf 'state:ghAuth=missing\n'
 fi
+
+if command -v git >/dev/null 2>&1 \
+  && [[ "$(git config --global --get core.autocrlf 2>/dev/null || true)" == input ]] \
+  && [[ "$(git config --global --get core.safecrlf 2>/dev/null || true)" == warn ]] \
+  && [[ "$(git config --global --get init.defaultBranch 2>/dev/null || true)" == main ]] \
+  && [[ "$(git config --global --get fetch.prune 2>/dev/null || true)" == true ]] \
+  && [[ "$(git config --global --get pull.ff 2>/dev/null || true)" == only ]]; then
+  printf 'state:gitBaseline=ready\n'
+else
+  printf 'state:gitBaseline=missing\n'
+fi
 '@
 
     $stateScriptText = @'
 code_root="$1"
-shift
+managed_block_hash="$2"
+global_agents_hash="$3"
+verify_script_hash="$4"
+approval_policy="$5"
+sandbox_mode="$6"
+web_search="$7"
+check_for_update="$8"
+network_access="$9"
+verify_docker="${10}"
+shift 10
 for package in "$@"; do
   if dpkg-query -W -f='${db:Status-Status}' "$package" 2>/dev/null | grep -qx installed; then
     version="$(dpkg-query -W -f='${Version}' "$package" 2>/dev/null || true)"
@@ -581,8 +701,10 @@ for package in "$@"; do
   fi
 done
 
-if command -v sudo >/dev/null 2>&1; then
-  printf 'state:sudo=available\n'
+if command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+  printf 'state:sudo=passwordless\n'
+elif command -v sudo >/dev/null 2>&1; then
+  printf 'state:sudo=interactive\n'
 else
   printf 'state:sudo=missing\n'
 fi
@@ -591,34 +713,103 @@ if [[ -d "$code_root" ]]; then
 else
   printf 'state:codeRoot=missing\n'
 fi
-if [[ -f "$HOME/.bashrc" ]] && grep -Fq '# >>> CodexDevSetup:WSL >>>' "$HOME/.bashrc"; then
-  printf 'state:managedShellBlock=present\n'
-  if awk '
-    $0 == "# >>> CodexDevSetup:WSL >>>" { inside=1; next }
-    $0 == "# <<< CodexDevSetup:WSL <<<" { inside=0 }
-    inside && /^export CODEX_HOME=/ { found=1 }
-    END { exit !found }
-  ' "$HOME/.bashrc"; then
-    printf 'state:managedBlockSharesCodexHome=present\n'
-  else
-    printf 'state:managedBlockSharesCodexHome=missing\n'
-  fi
+managed_block_count=$(grep -Fc '# >>> CodexDevSetup:WSL >>>' "$HOME/.bashrc" 2>/dev/null || true)
+managed_block_end_count=$(grep -Fc '# <<< CodexDevSetup:WSL <<<' "$HOME/.bashrc" 2>/dev/null || true)
+managed_block_actual=$(awk '
+  $0 == "# >>> CodexDevSetup:WSL >>>" { active=1 }
+  active { print }
+  $0 == "# <<< CodexDevSetup:WSL <<<" { exit }
+' "$HOME/.bashrc" 2>/dev/null | sha256sum | cut -d " " -f 1)
+if [[ $managed_block_count == 1 && $managed_block_end_count == 1 && $managed_block_actual == "$managed_block_hash" ]]; then
+  printf 'state:managedShellBlock=ready\n'
 else
-  printf 'state:managedShellBlock=missing\n'
-  printf 'state:managedBlockSharesCodexHome=not-managed\n'
+  printf 'state:managedShellBlock=stale\n'
+fi
+if [[ -f "$HOME/.codex/AGENTS.md" && $(sha256sum "$HOME/.codex/AGENTS.md" | cut -d " " -f 1) == "$global_agents_hash" ]]; then
+  printf 'state:globalAgents=ready\n'
+else
+  printf 'state:globalAgents=stale\n'
+fi
+
+toml_value_is() {
+  local section="$1" key="$2" expected="$3" file="$4"
+  awk -v target_section="$section" -v target_key="$key" -v expected="$expected" '
+    function trim(value) {
+      sub(/^[[:space:]]+/, "", value)
+      sub(/[[:space:]]+$/, "", value)
+      return value
+    }
+    BEGIN { current_section=""; matches=0 }
+    /^[[:space:]]*\[[^][]+\][[:space:]]*(#.*)?$/ {
+      current_section=$0
+      sub(/[[:space:]]*#.*$/, "", current_section)
+      sub(/^[[:space:]]*\[/, "", current_section)
+      sub(/\][[:space:]]*$/, "", current_section)
+      current_section=trim(current_section)
+      next
+    }
+    {
+      if (current_section != target_section) next
+      line=$0
+      if (line !~ "^[[:space:]]*" target_key "[[:space:]]*=") next
+      sub("^[[:space:]]*" target_key "[[:space:]]*=[[:space:]]*", "", line)
+      sub(/[[:space:]]+#.*$/, "", line)
+      if (trim(line) == expected) matches++
+    }
+    END { exit(matches == 1 ? 0 : 1) }
+  ' "$file"
+}
+
+codex_config="$HOME/.codex/config.toml"
+if [[ -f $codex_config ]] \
+  && toml_value_is '' approval_policy "\"$approval_policy\"" "$codex_config" \
+  && toml_value_is '' sandbox_mode "\"$sandbox_mode\"" "$codex_config" \
+  && toml_value_is '' web_search "\"$web_search\"" "$codex_config" \
+  && toml_value_is '' check_for_update_on_startup "$check_for_update" "$codex_config" \
+  && toml_value_is sandbox_workspace_write network_access "$network_access" "$codex_config"; then
+  printf 'state:codexConfig=ready\n'
+else
+  printf 'state:codexConfig=stale\n'
+fi
+
+verify_destination="$HOME/.local/lib/codex-dev-setup/verify.sh"
+verify_wrapper="$HOME/.local/bin/codex-env-check"
+if [[ -x $verify_destination && -x $verify_wrapper \
+  && $(sha256sum "$verify_destination" | cut -d " " -f 1) == "$verify_script_hash" \
+  && $(grep -Fc -- "exec $verify_destination" "$verify_wrapper") == 1 \
+  && $(grep -Fc -- "--code-root $code_root" "$verify_wrapper") == 1 \
+  && $(grep -Fc -- "--expected-distro ${WSL_DISTRO_NAME:-}" "$verify_wrapper") == 1 \
+  && $(grep -Fc -- '--command pwsh' "$verify_wrapper") == 1 \
+  && $(grep -Fc -- '"$@"' "$verify_wrapper") == 1 ]] \
+  && { [[ $verify_docker == 0 ]] || [[ $(grep -Fc -- '--command docker' "$verify_wrapper") == 1 ]]; }; then
+  printf 'state:environmentCheck=ready\n'
+else
+  printf 'state:environmentCheck=stale\n'
 fi
 '@
-    # Pass the script over stdin instead of as a wsl.exe command-line argument.
-    # The latter can consume Bash variable references such as "$t" while
-    # reconstructing the Linux command line. Linux process output is UTF-8,
-    # unlike wsl.exe's own --version/--list output which is UTF-16.
-    $toolArguments = @('-d', $distro, '--', 'bash', '-s', '--') + @($packageConfiguration.commandNames)
+    $requiredCommandNames = [System.Collections.Generic.List[string]]::new()
+    [void]$requiredCommandNames.Add('git')
+    [void]$requiredCommandNames.Add('pwsh')
+    if ($Config.toolchains.node.enabled) {
+        foreach ($name in @('node', 'npm', 'fnm')) { [void]$requiredCommandNames.Add($name) }
+    }
+    if ($Config.wsl.installPnpm) { [void]$requiredCommandNames.Add('pnpm') }
+    if ($Config.toolchains.python.enabled) {
+        foreach ($name in @('python3', 'uv')) { [void]$requiredCommandNames.Add($name) }
+    }
+    if ($Config.wsl.installCodexCli) { [void]$requiredCommandNames.Add('codex') }
+    if ($Config.toolchains.docker.enabled) { [void]$requiredCommandNames.Add('docker') }
+    $probeCommandNames = @($packageConfiguration.commandNames + @($requiredCommandNames) | Sort-Object -Unique)
+    $toolArguments = @('-d', $distro, '--', 'bash', '-s', '--') + $probeCommandNames
     $toolResult = Invoke-CapturedCommand -Command 'wsl.exe' -Arguments $toolArguments `
         -StandardInput $toolScriptText -TimeoutSeconds 30 -OutputEncoding ([Text.Encoding]::UTF8)
-    # Keep the package and shell-state probe separate from executable version
-    # probes. A broken Windows shim inherited through PATH must not prevent us
-    # from learning whether apt or sudo is actually needed.
-    $stateArguments = @('-d', $distro, '--', 'bash', '-s', '--', $codeRoot) + @($packageConfiguration.packageNames)
+    $stateArguments = @(
+        '-d', $distro, '--', 'bash', '-s', '--', $codeRoot, $managedBlockHash, $globalAgentsHash, $verifyScriptHash,
+        [string]$Config.codex.approvalPolicy, [string]$Config.codex.sandboxMode, [string]$Config.codex.webSearch,
+        $Config.codex.checkForUpdateOnStartup.ToString().ToLowerInvariant(),
+        $Config.codex.networkAccess.ToString().ToLowerInvariant(),
+        $(if ($Config.toolchains.docker.enabled) { '1' } else { '0' })
+    ) + @($packageConfiguration.packageNames)
     $stateResult = Invoke-CapturedCommand -Command 'wsl.exe' -Arguments $stateArguments `
         -StandardInput $stateScriptText -TimeoutSeconds 30 -OutputEncoding ([Text.Encoding]::UTF8)
     $toolValues = [ordered]@{}
@@ -645,18 +836,43 @@ fi
     $aptPackagesMissing = @($packageConfiguration.packageNames | Where-Object {
         -not $packageValues.Contains($_) -or $packageValues[$_].status -ne 'installed'
     })
+    $missingRequiredCommands = @($requiredCommandNames | Where-Object {
+        -not $toolValues.Contains($_) -or [string]$toolValues[$_] -in @('missing', 'unavailable', '')
+    })
+    $nonNativeCommands = @($requiredCommandNames | Where-Object {
+        $toolValues.Contains($_) -and [string]$toolValues[$_] -eq 'windows-path'
+    })
+    $toolchainAvailable = $toolResult.exitCode -eq 0 -and $stateResult.exitCode -eq 0
+    $codeRootExists = $stateValues['codeRoot'] -eq 'present'
+    $managedBlockReady = $stateValues['managedShellBlock'] -eq 'ready'
+    $globalAgentsReady = $stateValues['globalAgents'] -eq 'ready'
+    $codexConfigReady = $stateValues['codexConfig'] -eq 'ready'
+    $verifyCommandReady = $stateValues['environmentCheck'] -eq 'ready'
+    $gitBaselinePresent = $stateValues['gitBaseline'] -eq 'ready'
+    $environmentReady = $toolchainAvailable -and $codeRootExists -and $managedBlockReady -and
+        $globalAgentsReady -and $codexConfigReady -and $verifyCommandReady -and
+        (-not $Config.wsl.configureGit -or $gitBaselinePresent) -and
+        $aptPackagesMissing.Count -eq 0 -and $missingRequiredCommands.Count -eq 0 -and $nonNativeCommands.Count -eq 0
     return [pscustomobject]@{
-        available=($toolResult.exitCode -eq 0 -and $stateResult.exitCode -eq 0)
+        available=$toolchainAvailable
         distro=$distro
         tools=[pscustomobject]$toolValues
         packages=[pscustomobject]$packageValues
+        requiredCommandNames=@($requiredCommandNames)
+        missingRequiredCommands=$missingRequiredCommands
+        nonNativeCommands=$nonNativeCommands
         aptPackagesMissing=$aptPackagesMissing
-        codeRootExists=($stateValues['codeRoot'] -eq 'present')
-        managedBlockPresent=($stateValues['managedShellBlock'] -eq 'present')
-        managedBlockSharesCodexHome=$(if ($stateValues['managedBlockSharesCodexHome'] -eq 'not-managed') { $null } else { $stateValues['managedBlockSharesCodexHome'] -eq 'present' })
-        sudoAvailable=($stateValues['sudo'] -eq 'available')
+        codeRootExists=$codeRootExists
+        managedBlockReady=$managedBlockReady
+        globalAgentsReady=$globalAgentsReady
+        codexConfigReady=$codexConfigReady
+        verifyCommandReady=$verifyCommandReady
+        gitBaselinePresent=$gitBaselinePresent
+        readiness=$(if ($environmentReady) { 'Ready' } else { 'NotReady' })
+        environmentReady=$environmentReady
+        sudoAvailable=($stateValues['sudo'] -eq 'passwordless')
+        sudoMode=$(if ($stateValues.Contains('sudo')) { [string]$stateValues['sudo'] } else { 'unknown' })
         githubAuthStatus=$(if ($stateValues.Contains('ghAuth')) { $stateValues['ghAuth'] } else { 'unknown' })
-        configuredPackageGroups=@($packageConfiguration.groups)
         error=@($toolResult.error, $stateResult.error | Where-Object { $_ }) -join '; '
         skipped=$false
         reason=$null
@@ -672,7 +888,9 @@ function Get-CodexSetupDetection {
     )
 
     $issues = [System.Collections.Generic.List[object]]::new()
-    Write-SetupStatus -Kind Info -Message "开始$(if ($DeepWsl) { '完整' } else { '快速' })环境检测。"
+    $isWslFirst = $Config.environmentMode -eq 'WslFirst'
+    $targetLabel = if ($isWslFirst) { "WSL2 $($Config.wsl.distribution)" } else { 'Windows 原生开发环境' }
+    Write-SetupStatus -Kind Info -Message "开始$(if ($DeepWsl -and $isWslFirst) { '完整' } else { '快速' })环境检测；目标：$targetLabel。"
 
     $windows = Invoke-DetectionStage -Index 1 -Name '检测 Windows 与权限' -Issues $issues -Operation {
         Get-WindowsInfo
@@ -687,64 +905,102 @@ function Get-CodexSetupDetection {
     }
 
     $apps = Invoke-DetectionStage -Index 2 -Name '检测 Codex Desktop 与 Terminal' -Issues $issues -Operation {
-        $packages = @(Get-AppxPackage -ErrorAction Stop)
+        $catalog = Get-WindowsPackageCatalog
+        $packageStates = [ordered]@{}
+        if ($catalog.state -eq 'Known') {
+            foreach ($target in @(
+                @('winget', 'GitHub.cli'), @('winget', 'Microsoft.WindowsTerminal'), @('winget', 'Git.Git'),
+                @('msstore', '9PLM9XGG6VKS'), @('winget', 'Docker.DockerDesktop'), @('winget', 'Microsoft.PowerShell'),
+                @('winget', 'BurntSushi.ripgrep.MSVC'), @('winget', 'sharkdp.fd'), @('winget', 'jqlang.jq'),
+                @('winget', 'OpenJS.NodeJS.LTS'), @('winget', 'astral-sh.uv')
+            )) {
+                $packageStates["$($target[0])|$($target[1])"] = Get-WindowsPackageState -PackageId $target[1] -Source $target[0] -Catalog $catalog
+            }
+        }
+        $catalog | Add-Member -NotePropertyName packageStates -NotePropertyValue ([pscustomobject]$packageStates) -Force
         [pscustomobject]@{
-            packages=$packages
-            terminal=Get-AppxDetection -Pattern 'Microsoft\.WindowsTerminal' -Packages $packages
-            codex=Get-AppxDetection -Pattern '(?i)ChatGPT|OpenAI' -Packages $packages
+            catalog=$catalog
+            terminal=Get-WindowsPackageDetection -Catalog $catalog -PackageId 'Microsoft.WindowsTerminal' -Source winget
+            codex=Get-WindowsPackageDetection -Catalog $catalog -PackageId '9PLM9XGG6VKS' -Source msstore
             terminalCommand=Get-CommandInfoSafe 'wt.exe' -SkipVersionProbe
         }
     } -Fallback {
         param($message)
         [pscustomobject]@{
-            packages=@()
-            terminal=[pscustomobject]@{ installed=$false; packages=@(); error=$message }
-            codex=[pscustomobject]@{ installed=$false; packages=@(); error=$message }
+            catalog=[pscustomobject]@{ state='Unknown'; complete=$false; packages=@(); packageStates=[pscustomobject]@{}; error=$message }
+            terminal=[pscustomobject]@{ state='Unknown'; installed=$false; packageId='Microsoft.WindowsTerminal'; source='winget'; version=$null; name=$null; error=$message }
+            codex=[pscustomobject]@{ state='Unknown'; installed=$false; packageId='9PLM9XGG6VKS'; source='msstore'; version=$null; name=$null; error=$message }
             terminalCommand=New-UnavailableCommandInfo -Error $message
         }
     } -ResultSummary {
         param($value)
-        $codexText = if ($value.codex.installed) { 'Codex Desktop 可用' } else { '未检测到 Codex Desktop' }
-        $terminalText = if ($value.terminal.installed -or $value.terminalCommand.installed) { 'Windows Terminal 可用' } else { '未检测到 Windows Terminal' }
+        $codexText = if ($value.codex.state -eq 'Unknown') {
+            '无法确认 Codex Desktop 包状态'
+        }
+        elseif ($value.codex.installed) { 'Codex Desktop 已安装' }
+        else { 'Codex Desktop 包未安装' }
+        $terminalText = if ($value.terminal.state -eq 'Unknown') {
+            '无法确认 Windows Terminal 包状态'
+        }
+        elseif ($value.terminal.installed) { 'Windows Terminal 已安装' }
+        elseif ($value.terminalCommand.installed) { 'Windows Terminal 包未登记，但 wt 命令可执行' }
+        else { 'Windows Terminal 包未安装' }
         "$codexText；$terminalText"
     }
 
-    $tools = Invoke-DetectionStage -Index 3 -Name '检测 Windows 开发工具与 PATH' -Issues $issues -Operation {
-        $python = Get-CommandInfoSafe 'python.exe' -VersionArguments @('--version') -SkipAppExecutionAliasProbe
-        if (-not $python.version -and $python.appExecutionAlias) {
-            $pythonPackage = $apps.packages | Where-Object Name -Match '^PythonSoftwareFoundation\.Python' |
-                Sort-Object Version -Descending | Select-Object -First 1
-            if ($pythonPackage) { $python.version = "Python package $($pythonPackage.Version)" }
+    $tools = Invoke-DetectionStage -Index 3 -Name '检测 Windows 侧组件与 PATH' -Issues $issues -Operation {
+        $notRequired = New-UnavailableCommandInfo -Error 'not-required-in-wsl-first'
+        $python = if ($isWslFirst) {
+            $notRequired
         }
+        else {
+            $value = Get-CommandInfoSafe 'python.exe' -VersionArguments @('--version') -SkipAppExecutionAliasProbe
+            $value
+        }
+        $dockerDesktop = if ($Config.toolchains.docker.enabled) {
+            Get-CommandInfoSafe 'docker.exe' -VersionArguments @('--version')
+        }
+        else { $notRequired }
         [pscustomobject]@{
             powershell7=Get-CommandInfoSafe 'pwsh.exe' -VersionArguments @('--version')
             winget=Get-CommandInfoSafe 'winget.exe' -VersionArguments @('--version')
             git=Get-CommandInfoSafe 'git.exe' -VersionArguments @('--version')
             githubCli=Get-CommandInfoSafe 'gh.exe' -VersionArguments @('--version')
-            node=Get-CommandInfoSafe 'node.exe' -VersionArguments @('--version')
-            npm=Get-CommandInfoSafe 'npm.cmd' -VersionArguments @('--version')
-            fnm=Get-CommandInfoSafe 'fnm.exe' -VersionArguments @('--version') -PackageId 'Schniz.fnm'
+            ripgrep=$(if ($isWslFirst) { $notRequired } else { Get-CommandInfoSafe 'rg.exe' -VersionArguments @('--version') -PackageId 'BurntSushi.ripgrep.MSVC' })
+            fd=$(if ($isWslFirst) { $notRequired } else { Get-CommandInfoSafe 'fd.exe' -VersionArguments @('--version') -PackageId 'sharkdp.fd' })
+            jq=$(if ($isWslFirst) { $notRequired } else { Get-CommandInfoSafe 'jq.exe' -VersionArguments @('--version') -PackageId 'jqlang.jq' })
+            node=$(if ($isWslFirst) { $notRequired } else { Get-CommandInfoSafe 'node.exe' -VersionArguments @('--version') })
+            npm=$(if ($isWslFirst) { $notRequired } else { Get-CommandInfoSafe 'npm.cmd' -VersionArguments @('--version') })
+            pnpm=$(if ($isWslFirst) { $notRequired } else { Get-CommandInfoSafe 'pnpm.cmd' -VersionArguments @('--version') })
             python=$python
-            pythonLauncher=Get-CommandInfoSafe 'py.exe' -VersionArguments @('--version')
-            uv=Get-CommandInfoSafe 'uv.exe' -VersionArguments @('--version') -PackageId 'astral-sh.uv'
-            codexCli=Get-CommandInfoSafe 'codex.exe' -SkipVersionProbe
-            windowsSandboxFeature=Get-WindowsFeatureState 'Containers-DisposableClientVM'
+            pythonLauncher=$(if ($isWslFirst) { $notRequired } else { Get-CommandInfoSafe 'py.exe' -VersionArguments @('--version') })
+            uv=$(if ($isWslFirst) { $notRequired } else { Get-CommandInfoSafe 'uv.exe' -VersionArguments @('--version') -PackageId 'astral-sh.uv' })
+            dockerDesktop=$dockerDesktop
+            docker=$(if ($isWslFirst) { $notRequired } else { $dockerDesktop })
+            codexCli=$(if ($isWslFirst) { $notRequired } else { Get-CommandInfoSafe 'codex.exe' -SkipVersionProbe })
             path=Get-PathDiagnostics
         }
     } -Fallback {
         param($message)
         $missing = New-UnavailableCommandInfo -Error $message
         [pscustomobject]@{
-            powershell7=$missing; winget=$missing; git=$missing; githubCli=$missing; node=$missing; npm=$missing
-            fnm=$missing; python=$missing; pythonLauncher=$missing; uv=$missing; codexCli=$missing
-            windowsSandboxFeature=[pscustomobject]@{ state='Unknown'; available=$false; error=$message }
-            path=[pscustomobject]@{ entries=@(); duplicates=@(); missing=@(); conflicts=@(); duplicateEntrypoints=@(); appAliases=@(); shadowedTools=@(); error=$message }
+            powershell7=$missing; winget=$missing; git=$missing; githubCli=$missing; ripgrep=$missing; fd=$missing; jq=$missing
+            node=$missing; npm=$missing; pnpm=$missing
+            python=$missing; pythonLauncher=$missing; uv=$missing; dockerDesktop=$missing; docker=$missing; codexCli=$missing
+            path=[pscustomobject]@{ entries=@(); duplicates=@(); missing=@(); conflicts=@(); duplicateEntrypoints=@(); appAliases=@(); error=$message }
         }
     } -ResultSummary {
         param($value)
-        $commonTools = [ordered]@{
-            'PowerShell 7'=$value.powershell7; 'WinGet'=$value.winget; 'Git'=$value.git; 'GitHub CLI'=$value.githubCli
-            'Node.js'=$value.node; 'Python'=$value.python; 'fnm'=$value.fnm; 'uv'=$value.uv
+        $commonTools = [ordered]@{ 'PowerShell 7'=$value.powershell7; 'WinGet'=$value.winget }
+        if ($Config.windows.installUiGit) { $commonTools['Git UI 后端'] = $value.git }
+        if ($Config.windows.installGitHubCli) { $commonTools['GitHub CLI'] = $value.githubCli }
+        if ($Config.toolchains.docker.enabled) { $commonTools['Docker Desktop'] = $value.dockerDesktop }
+        if (-not $isWslFirst) {
+            $commonTools['ripgrep'] = $value.ripgrep; $commonTools['fd'] = $value.fd; $commonTools['jq'] = $value.jq
+            if ($Config.toolchains.node.enabled) {
+                $commonTools['Node.js'] = $value.node; $commonTools['npm'] = $value.npm
+            }
+            if ($Config.toolchains.python.enabled) { $commonTools['Python'] = $value.python; $commonTools['uv'] = $value.uv }
         }
         $missingToolNames = @($commonTools.GetEnumerator() | Where-Object { -not $_.Value.installed } | ForEach-Object Key)
         $availableCount = $commonTools.Count - $missingToolNames.Count
@@ -754,58 +1010,92 @@ function Get-CodexSetupDetection {
         else {
             "常用工具 $availableCount/$($commonTools.Count)；缺少 $($missingToolNames -join '、')"
         }
-        $pathConflictCount = @($value.path.conflicts).Count
-        $pathMissingCount = @($value.path.missing).Count
-        $pathFindings = @()
-        if ($pathConflictCount -gt 0) { $pathFindings += "$pathConflictCount 组命令冲突" }
-        if ($pathMissingCount -gt 0) { $pathFindings += "$pathMissingCount 个无效目录" }
-        $pathText = if ($pathFindings.Count -eq 0) { 'PATH 无需处理' } else { "PATH：$($pathFindings -join '，')" }
+        $pathText = if ($isWslFirst) {
+            '开发工具 PATH 以 WSL 完整检测为准'
+        }
+        else {
+            $pathConflictCount = @($value.path.conflicts).Count
+            $pathMissingCount = @($value.path.missing).Count
+            $pathFindings = @()
+            if ($pathConflictCount -gt 0) { $pathFindings += "$pathConflictCount 组命令冲突" }
+            if ($pathMissingCount -gt 0) { $pathFindings += "$pathMissingCount 个无效目录" }
+            if ($pathFindings.Count -eq 0) { 'PATH 无需处理' } else { "PATH：$($pathFindings -join '，')" }
+        }
         "$toolText；$pathText"
     }
 
-    $wsl = Invoke-DetectionStage -Index 4 -Name '检测 WSL 发行版' -Issues $issues -Operation {
-        Get-WslInfo
-    } -Fallback {
-        param($message)
-        [pscustomobject]@{ installed=$false; version=$null; distros=@(); ubuntu=$false; ubuntuName=$null; ubuntuWsl2=$false; detail=''; error=$message }
-    } -ResultSummary {
-        param($value)
-        if ($value.ubuntuWsl2) { "$($value.ubuntuName) 可用；运行于 WSL2" }
-        elseif ($value.ubuntu) { "$($value.ubuntuName) 已安装；尚未使用 WSL2" }
-        elseif ($value.installed) { 'WSL 可用；尚未安装 Ubuntu' }
-        else { '未检测到 WSL' }
+    $wsl = if ($isWslFirst) {
+        Invoke-DetectionStage -Index 4 -Name '检测 WSL 发行版' -Issues $issues -Operation {
+            Get-WslInfo -Distribution ([string]$Config.wsl.distribution)
+        } -Fallback {
+            param($message)
+            [pscustomobject]@{
+                state='Unknown'; installed=$false; version=$null; distros=@(); distribution=[string]$Config.wsl.distribution
+                defaultDistribution=$null; defaultVersion=$null; distributionInstalled=$false; distributionVersion=$null; distributionWsl2=$false
+                feature=[pscustomobject]@{ state='Unknown'; enabled=$null; error=$message }; detail=''; error=$message
+            }
+        } -ResultSummary {
+            param($value)
+            if ($value.state -in @('Unknown', 'Unavailable')) { return $value.error }
+            if ($value.state -eq 'Ready') {
+            $defaultText = if ($value.defaultDistribution -eq $value.distribution) {
+                '且为默认发行版'
+            }
+            elseif ([string]::IsNullOrWhiteSpace([string]$value.defaultDistribution)) {
+                '未识别默认发行版'
+            }
+            else {
+                "默认发行版为 $($value.defaultDistribution)"
+            }
+            "$($value.distribution) 可用；运行于 WSL2；$defaultText"
+            }
+            elseif ($value.state -eq 'UnsupportedWsl1') { "$($value.distribution) 正在使用不受支持的 WSL1" }
+            elseif ($value.state -eq 'TargetMissing') { "WSL2 可用；尚未安装 $($value.distribution)" }
+            elseif ($value.state -eq 'NoDistribution') { 'WSL2 可用；尚未安装 Linux 发行版' }
+            elseif ($value.state -eq 'FeatureDisabled') { 'Windows WSL 可选功能尚未启用' }
+            else { $value.error }
+        }
     }
-    $wslNetwork = Get-WslNetworkInfo
-    $networkSummary = if ($wslNetwork.mirroredConfigured) { 'mirrored' } else { $wslNetwork.networkingMode }
-    $proxySummary = if (@($wslNetwork.loopbackListeners).Count -gt 0) {
-        '本机代理端口 ' + (@($wslNetwork.loopbackListeners.LocalPort | Sort-Object -Unique) -join '、')
+    else {
+        Write-Host '[4/6] 跳过 WSL 检测：当前选择 Windows 原生开发。' -ForegroundColor DarkGray
+        [pscustomobject]@{
+            state='NotApplicable'; installed=$false; version=$null; distros=@(); distribution=[string]$Config.wsl.distribution
+            defaultDistribution=$null; defaultVersion=$null; distributionInstalled=$false; distributionVersion=$null; distributionWsl2=$false
+            feature=[pscustomobject]@{ state='NotApplicable'; enabled=$null; error=$null }; detail=''; error=$null; skipped=$true
+        }
     }
-    elseif ($wslNetwork.windowsProxyEnabled) { 'Windows 已启用系统代理，但未确认本地监听端口' }
-    else { '未检测到常见本机代理端口' }
-    Write-Host "      网络：$networkSummary；$proxySummary" -ForegroundColor DarkGray
+    $wslNetwork = if ($isWslFirst) {
+        Get-WslNetworkInfo
+    }
+    else {
+        [pscustomobject]@{
+            wslConfigPath=$null; wslConfigExists=$false; networkingMode='not-required'; mirroredConfigured=$false
+            dnsTunneling=$null; autoProxy=$null; firewall=$null; error=$null; skipped=$true
+        }
+    }
+    if ($isWslFirst) {
+        $networkSummary = if ($wslNetwork.mirroredConfigured) { 'mirrored' } else { $wslNetwork.networkingMode }
+        Write-Host "      网络：$networkSummary；DNS 隧道 $($wslNetwork.dnsTunneling)；自动代理 $($wslNetwork.autoProxy)" -ForegroundColor DarkGray
+    }
 
-    if ($DeepWsl) {
+    if ($DeepWsl -and $isWslFirst) {
         $wslTools = Invoke-DetectionStage -Index 5 -Name '检测 WSL 工具链（可能需要 5–10 秒）' -Issues $issues -Operation {
             Get-WslToolchainInfo -WslInfo $wsl -Config $Config
         } -Fallback {
             param($message)
             [pscustomobject]@{
-                available=$false; distro=$wsl.ubuntuName; tools=[pscustomobject]@{}; packages=[pscustomobject]@{}
-                aptPackagesMissing=@(); codeRootExists=$null; managedBlockPresent=$null; managedBlockSharesCodexHome=$null; sudoAvailable=$null
-                githubAuthStatus=$null; configuredPackageGroups=@()
+                available=$false; distro=$wsl.distribution; tools=[pscustomobject]@{}; packages=[pscustomobject]@{}
+                requiredCommandNames=@(); missingRequiredCommands=@(); nonNativeCommands=@()
+                aptPackagesMissing=@(); codeRootExists=$null; managedBlockReady=$null; globalAgentsReady=$null
+                codexConfigReady=$null; verifyCommandReady=$null; gitBaselinePresent=$null; readiness='Unknown'; environmentReady=$false; sudoAvailable=$null; sudoMode=$null
+                githubAuthStatus=$null
                 error=$message; skipped=$false; reason='WSL 工具链检测失败。'
             }
         } -ResultSummary {
             param($value)
             if (-not $value.available) { return $value.reason }
-            $requiredToolNames = @(
-                if ($Config.toolchains.node.enabled) { 'node'; 'npm'; 'fnm' }
-                if ($Config.toolchains.python.enabled) { 'python3'; 'uv' }
-            )
-            $missingToolNames = @($requiredToolNames | Where-Object {
-                $property = $value.tools.PSObject.Properties[$_]
-                $null -eq $property -or [string]$property.Value -in @('missing', 'windows-path', 'unavailable', '')
-            })
+            $requiredToolNames = @($value.requiredCommandNames)
+            $missingToolNames = @($value.missingRequiredCommands + $value.nonNativeCommands | Select-Object -Unique)
             $availableToolCount = $requiredToolNames.Count - $missingToolNames.Count
             $toolText = if ($missingToolNames.Count -eq 0) {
                 "$($requiredToolNames.Count) 项主要 Linux 工具均可用"
@@ -826,56 +1116,79 @@ function Get-CodexSetupDetection {
         }
     }
     else {
-        Write-Host '[5/6] 跳过 WSL 工具链（可从菜单运行完整检测）' -ForegroundColor DarkGray
-        Write-Host '      未启动 WSL/Linux；不影响本次快速检查。' -ForegroundColor DarkGray
-        Write-SetupLog -Level Debug -Message '快速检测跳过 WSL 工具链'
+        $skipReason = if ($isWslFirst) { '快速检测未启动 WSL/Linux。' } else { 'WindowsNative 模式不使用 WSL 工具链。' }
+        Write-Host "[5/6] 跳过 WSL 工具链：$skipReason" -ForegroundColor DarkGray
+        Write-SetupLog -Level Debug -Message $skipReason
         $wslTools = Get-WslToolchainInfo -WslInfo $wsl -Config $Config -Skip
+        $wslTools.reason = $skipReason
     }
 
     $project = Invoke-DetectionStage -Index 6 -Name '生成项目建议与健康摘要' -Issues $issues -Operation {
-        Get-ProjectRecommendation -ProjectPath $ProjectPath -WslProjects $Config.paths.wslProjects
+        Get-ProjectRecommendation -ProjectPath $ProjectPath -ConfiguredEnvironmentMode $Config.environmentMode `
+            -WslProjects $Config.paths.wslProjects -WslDistribution $Config.wsl.distribution
     } -Fallback {
         param($message)
-        [pscustomobject]@{ path=$ProjectPath; exists=$false; agent='WSL'; terminal='WSL'; confidence='low'; reasons=@("项目建议检测失败：$message") }
+        [pscustomobject]@{
+            path=$ProjectPath; exists=$false; recommendedEnvironmentMode=$Config.environmentMode
+            configuredEnvironmentMode=$Config.environmentMode; matchesConfiguredMode=$true; confidence='low'
+            recommendationOnly=$true; locationCompatible=$false; reasons=@("项目建议检测失败：$message")
+        }
     } -ResultSummary {
         param($value)
-        $agentText = if ($value.agent -eq 'WindowsNative') { 'Windows' } else { 'WSL/Linux' }
-        $terminalText = if ($value.terminal -eq 'PowerShell7') { 'PowerShell' } else { 'WSL/Linux 终端' }
-        "建议使用 $agentText；终端选择 $terminalText"
+        $recommendedText = if ($value.recommendedEnvironmentMode -eq 'WindowsNative') { 'Windows 原生开发环境' } else { 'WSL/Linux 开发环境' }
+        $matchText = if ($value.matchesConfiguredMode) { '与配置一致' } else { '仅提示，不会切换配置' }
+        "项目建议 $recommendedText；$matchText"
     }
 
-    foreach ($entry in @($tools.powershell7, $tools.winget, $tools.git, $tools.githubCli, $tools.node, $tools.npm, $tools.python, $tools.uv)) {
+    $probedWindowsTools = @($tools.powershell7, $tools.winget, $tools.git, $tools.githubCli)
+    if ($Config.toolchains.docker.enabled) { $probedWindowsTools += $tools.dockerDesktop }
+    if (-not $isWslFirst) {
+        $probedWindowsTools += @($tools.ripgrep, $tools.fd, $tools.jq, $tools.node, $tools.npm, $tools.pnpm, $tools.python, $tools.uv)
+    }
+    foreach ($entry in $probedWindowsTools) {
         if ($entry.probeError) {
             $issues.Add([pscustomobject]@{ stage=3; name='命令版本探测'; error=$entry.probeError; severity='Warning' })
         }
     }
-    if ($apps.terminal.error) { $issues.Add([pscustomobject]@{ stage=2; name='Windows Terminal package'; error=$apps.terminal.error; severity='Warning' }) }
-    if ($apps.codex.error) { $issues.Add([pscustomobject]@{ stage=2; name='Codex Desktop package'; error=$apps.codex.error; severity='Warning' }) }
-    if ($wsl.error) { $issues.Add([pscustomobject]@{ stage=4; name='WSL'; error=$wsl.error; severity='Warning' }) }
+    if ($apps.catalog.error) { $issues.Add([pscustomobject]@{ stage=2; name='Windows 软件包清单'; error=$apps.catalog.error; severity='Warning' }) }
+    if ($isWslFirst -and $wsl.error) { $issues.Add([pscustomobject]@{ stage=4; name='WSL'; error=$wsl.error; severity='Warning' }) }
     if ($wslNetwork.error) { $issues.Add([pscustomobject]@{ stage=4; name='WSL 网络'; error=$wslNetwork.error; severity='Warning' }) }
     if (-not $wslTools.skipped -and $wslTools.error) { $issues.Add([pscustomobject]@{ stage=5; name='WSL 工具链'; error=$wslTools.error; severity='Warning' }) }
 
     $result = [ordered]@{
         detectedAt=(Get-Date).ToString('o')
-        detectionMode=$(if ($DeepWsl) { '完整' } else { '快速' })
+        detectionMode=$(if ($DeepWsl -and $isWslFirst) { '完整' } else { '快速' })
+        environmentMode=$Config.environmentMode
+        desktopSettings=[pscustomobject]@{
+            detectable=$false
+            agentEnvironment=$(if ($isWslFirst) { 'Windows Subsystem for Linux' } else { 'Windows Native' })
+            terminalShell=$(if ($isWslFirst) { 'WSL' } else { 'PowerShell' })
+            restartRequired=$true
+            verificationCommand=$(if ($isWslFirst) { 'codex-env-check' } else { 'Get-Command git,node,python,codex' })
+        }
         windows=$windows
         codexDesktop=$apps.codex
         windowsTerminal=[pscustomobject]@{ command=$apps.terminalCommand; app=$apps.terminal }
+        windowsPackageCatalog=$apps.catalog
         powershell7=$tools.powershell7
         winget=$tools.winget
         git=$tools.git
         githubCli=$tools.githubCli
+        ripgrep=$tools.ripgrep
+        fd=$tools.fd
+        jq=$tools.jq
         node=$tools.node
         npm=$tools.npm
-        fnm=$tools.fnm
+        pnpm=$tools.pnpm
         python=$tools.python
         pythonLauncher=$tools.pythonLauncher
         uv=$tools.uv
+        dockerDesktop=$tools.dockerDesktop
+        docker=$tools.docker
         codexCli=$tools.codexCli
         wsl=$wsl
         wslNetwork=$wslNetwork
         wslTools=$wslTools
-        windowsSandboxFeature=$tools.windowsSandboxFeature
         path=$tools.path
         project=$project
         issues=@($issues)
@@ -883,13 +1196,36 @@ function Get-CodexSetupDetection {
     }
     $score = 100
     if (-not $windows.isWindows11) { $score -= 25 }
-    foreach ($required in @($result.powershell7, $result.winget, $result.git)) { if (-not $required.installed) { $score -= 10 } }
-    if (-not $result.codexDesktop.installed) { $score -= 15 }
-    if (-not $result.githubCli.installed) { $score -= 5 }
-    if (-not $wsl.ubuntuWsl2) { $score -= 10 }
-    if ($result.path.conflicts.Count -gt 0) { $score -= [math]::Min(15, $result.path.conflicts.Count * 3) }
+    foreach ($required in @($result.powershell7, $result.winget)) { if (-not $required.installed) { $score -= 10 } }
+    if ($Config.windows.installDesktop -and -not $result.codexDesktop.installed) { $score -= 15 }
+    if ($Config.windows.installTerminal -and -not $result.windowsTerminal.app.installed) { $score -= 10 }
+    if ($Config.windows.installUiGit -and -not $result.git.installed) { $score -= 5 }
+    if ($Config.windows.installGitHubCli -and -not $result.githubCli.installed) { $score -= 5 }
+    if ($isWslFirst) {
+        if (-not $wsl.distributionWsl2) { $score -= 25 }
+        elseif ($wsl.defaultDistribution -ne $wsl.distribution) { $score -= 10 }
+        if ($DeepWsl -and $wslTools.available) {
+            $score -= [math]::Min(30, (@($wslTools.missingRequiredCommands).Count + @($wslTools.nonNativeCommands).Count) * 5)
+            if (-not $wslTools.codeRootExists) { $score -= 5 }
+            if (-not $wslTools.globalAgentsReady) { $score -= 5 }
+            if (-not $wslTools.verifyCommandReady) { $score -= 5 }
+        }
+        elseif ($DeepWsl) { $score -= 20 }
+    }
+    else {
+        if ($Config.toolchains.node.enabled) {
+            foreach ($required in @($result.node, $result.npm)) { if (-not $required.installed) { $score -= 5 } }
+        }
+        if ($Config.toolchains.python.enabled) {
+            foreach ($required in @($result.python, $result.uv)) { if (-not $required.installed) { $score -= 5 } }
+        }
+        if ($Config.toolchains.docker.enabled -and -not $result.docker.installed) { $score -= 5 }
+    }
+    if (-not $isWslFirst -and $result.path.conflicts.Count -gt 0) {
+        $score -= [math]::Min(15, $result.path.conflicts.Count * 3)
+    }
     $result.healthScore = [math]::Max(0, $score)
-    $result.healthLabel = Get-HealthLabel -Score $result.healthScore
+    $result.healthLabel = if ($isWslFirst -and $wslTools.readiness -eq 'Unknown') { '尚未完整检查' } else { Get-HealthLabel -Score $result.healthScore }
     $object = [pscustomobject]$result
     Write-SetupLog -Message '环境检测完成' -Data $object
     return $object

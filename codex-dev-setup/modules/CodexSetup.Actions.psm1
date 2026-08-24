@@ -1,20 +1,36 @@
 Set-StrictMode -Version Latest
 
+function Get-ActionProperty {
+    param($InputObject, [Parameter(Mandatory)][string]$Name, $Default = $null)
+    if ($null -ne $InputObject -and $InputObject.PSObject.Properties.Name -contains $Name) {
+        return $InputObject.$Name
+    }
+    return $Default
+}
+
+function New-ActionOutcome {
+    param(
+        [Parameter(Mandatory)][ValidateSet('Changed', 'NoChange', 'NeedsAttention', 'RestartRequired')][string]$Status,
+        [Parameter(Mandatory)][string]$Summary,
+        [AllowNull()]$Data
+    )
+    [pscustomobject]@{ status=$Status; summary=$Summary; data=$Data }
+}
+
 function Convert-WindowsPathToWsl {
     param([Parameter(Mandatory)][string]$Path, [string]$ExpectedDistro)
     $full = [System.IO.Path]::GetFullPath($Path)
     if ($full -match '^([A-Za-z]):\\(.*)$') {
-        return "/mnt/$($matches[1].ToLowerInvariant())/$($matches[2].Replace('\','/'))"
+        return "/mnt/$($matches[1].ToLowerInvariant())/$($matches[2].Replace('\\','/'))"
     }
     if ($full -match '^\\\\(?:wsl\.localhost|wsl\$)\\([^\\]+)\\(.*)$') {
         $pathDistro = $matches[1]
-        $linuxPath = $matches[2]
         if ($ExpectedDistro -and $pathDistro -ine $ExpectedDistro) {
-            throw "WSL helper 位于 $pathDistro，但计划目标发行版是 $ExpectedDistro；为避免在错误发行版执行，本次已停止。"
+            throw "文件位于 $pathDistro，但目标发行版是 $ExpectedDistro。"
         }
-        return '/' + $linuxPath.Replace('\', '/')
+        return '/' + $matches[2].Replace('\\', '/')
     }
-    throw "无法将路径转换为 WSL 路径：$Path"
+    throw "无法转换为 WSL 路径：$Path"
 }
 
 function Invoke-ExternalSetupCommand {
@@ -27,13 +43,10 @@ function Invoke-ExternalSetupCommand {
     )
     Write-SetupLog -Message '执行外部命令' -Data @{ command=$Command; arguments=$Arguments }
     if ($Quiet) {
-        # Successful setup tools often print English messages such as "already
-        # installed". Keep those details in the diagnostic log and only show a
-        # short tail if the command actually fails.
         $commandOutput = @(& $Command @Arguments 2>&1)
         $exitCode = $LASTEXITCODE
         if ($commandOutput.Count -gt 0) {
-            Write-SetupLog -Level Debug -Message '外部命令输出已收起' -Data @{
+            Write-SetupLog -Level Debug -Message '外部命令输出' -Data @{
                 command=$Command
                 output=(ConvertTo-RedactedText (($commandOutput | ForEach-Object { [string]$_ }) -join "`n"))
             }
@@ -45,8 +58,7 @@ function Invoke-ExternalSetupCommand {
     }
     if ($exitCode -ne 0 -and -not $AllowFailure) {
         $detail = if ($Quiet -and $commandOutput.Count -gt 0) {
-            $tail = @($commandOutput | Select-Object -Last 5 | ForEach-Object { [string]$_ }) -join '；'
-            "。详情：$(ConvertTo-RedactedText $tail)"
+            '。详情：' + (ConvertTo-RedactedText ((@($commandOutput | Select-Object -Last 5) -join '；')))
         }
         else { '' }
         throw "命令失败（exit=$exitCode）：$Command $($Arguments -join ' ')$detail"
@@ -61,283 +73,116 @@ function Invoke-InteractiveExternalSetupCommand {
         [string[]]$Arguments = @(),
         [switch]$AllowFailure
     )
-
-    Write-SetupLog -Message '以前台交互方式执行外部命令' -Data @{ command=$Command; arguments=$Arguments }
+    Write-SetupLog -Message '执行交互命令' -Data @{ command=$Command; arguments=$Arguments }
     $startInfo = [Diagnostics.ProcessStartInfo]::new()
     $startInfo.FileName = $Command
     $startInfo.UseShellExecute = $false
-    $startInfo.RedirectStandardInput = $false
-    $startInfo.RedirectStandardOutput = $false
-    $startInfo.RedirectStandardError = $false
     foreach ($argument in $Arguments) { [void]$startInfo.ArgumentList.Add([string]$argument) }
-
+    $process = [Diagnostics.Process]::Start($startInfo)
+    if ($null -eq $process) { throw "无法启动命令：$Command" }
     try {
-        $process = [Diagnostics.Process]::Start($startInfo)
-        if ($null -eq $process) { throw '进程未能启动。' }
         $process.WaitForExit()
         $exitCode = $process.ExitCode
-        $process.Dispose()
     }
-    catch {
-        throw "无法启动交互命令 $Command：$($_.Exception.Message)"
-    }
-
+    finally { $process.Dispose() }
     if ($exitCode -ne 0 -and -not $AllowFailure) {
         throw "命令失败（exit=$exitCode）：$Command $($Arguments -join ' ')"
     }
     return $exitCode
 }
 
-function Invoke-WingetReadOnlyQuery {
-    param(
-        [Parameter(Mandatory)][string[]]$Arguments,
-        [Parameter(Mandatory)][string]$PackageId,
-        [Parameter(Mandatory)][string]$Purpose
-    )
-    Write-SetupLog -Message $Purpose -Data @{ command='winget.exe'; arguments=$Arguments; packageId=$PackageId }
-    $commandOutput = @(& winget.exe @Arguments 2>&1)
-    $exitCode = $LASTEXITCODE
-    $outputText = (($commandOutput | ForEach-Object { [string]$_ }) -join "`n")
-    Write-SetupLog -Level Debug -Message 'WinGet 查询输出已收起' -Data @{
-        packageId=$PackageId; purpose=$Purpose; exitCode=$exitCode; output=(ConvertTo-RedactedText $outputText)
-    }
-    return [pscustomobject]@{ exitCode=$exitCode; lines=$commandOutput; text=$outputText }
-}
-
-function Get-WingetInstalledPackage {
-    param(
-        [Parameter(Mandatory)][string]$PackageId,
-        [Parameter(Mandatory)][ValidateSet('winget', 'msstore')][string]$Source
-    )
-    $arguments = @('list', '--id', $PackageId, '--exact', '--source', $Source, '--accept-source-agreements', '--disable-interactivity')
-    $query = Invoke-WingetReadOnlyQuery -Arguments $arguments -PackageId $PackageId -Purpose '查询软件是否已经安装'
-    $packageLines = @($query.lines | ForEach-Object { [string]$_ } | Where-Object {
-        $_ -match [regex]::Escape($PackageId)
-    })
-    $installed = $query.exitCode -eq 0 -and $packageLines.Count -gt 0
-    $version = if ($installed) { Get-WingetPackageVersionFromLines -Lines $packageLines -PackageId $PackageId } else { $null }
-    return [pscustomobject]@{ installed=$installed; version=$version }
-}
-
-function Get-WingetPackageVersionFromLines {
-    param(
-        [Parameter(Mandatory)][object[]]$Lines,
-        [Parameter(Mandatory)][string]$PackageId,
-        [ValidateSet('Installed', 'Available')][string]$VersionKind = 'Installed'
-    )
-    foreach ($lineObject in $Lines) {
-        $line = [string]$lineObject
-        $idMatch = [regex]::Match($line, '(?<!\S)' + [regex]::Escape($PackageId) + '(?!\S)')
-        if (-not $idMatch.Success) { continue }
-        $tail = $line.Substring($idMatch.Index + $idMatch.Length).Trim()
-        $columns = @($tail -split '\s+' | Where-Object { $_ })
-        if ($VersionKind -eq 'Available' -and $columns.Count -lt 3) { return $null }
-        $versionIndex = if ($VersionKind -eq 'Available') { 1 } else { 0 }
-        if ($columns.Count -gt $versionIndex) { return [string]$columns[$versionIndex] }
-    }
-    return $null
-}
-
 function Install-WingetPackage {
     param([Parameter(Mandatory)]$Action)
-    $id = [string]$Action.parameters.packageId
+    $packageId = [string]$Action.parameters.packageId
     $source = [string]$Action.parameters.source
-    $existingPackage = Get-WingetInstalledPackage -PackageId $id -Source $source
-    if ($existingPackage.installed) {
-        $versionText = if ($existingPackage.version) { "版本 $($existingPackage.version)；" } else { '' }
-        return [pscustomobject]@{ summary="已存在，${versionText}未重复安装"; installedVersion=$existingPackage.version }
+    $existing = Get-WindowsPackageState -PackageId $packageId -Source $source
+    if ($existing.state -eq 'Unknown') { throw "无法确认 $packageId 是否已安装；已停止自动安装。$($existing.error)" }
+    if ($existing.installed) {
+        return New-ActionOutcome -Status NoChange -Summary '已安装，无需处理' -Data @{ installedVersion=$existing.version }
     }
-
-    $arguments = @('install', '--id', $id)
-    if ($source -eq 'msstore') { $arguments += @('--source', 'msstore') }
-    else { $arguments += @('--exact', '--source', 'winget') }
-    $arguments += @('--accept-source-agreements', '--accept-package-agreements')
+    $arguments = @('install', '--id', $packageId, '--source', $source)
+    $arguments += '--exact'
+    $arguments += @('--accept-source-agreements', '--accept-package-agreements', '--disable-interactivity', '--silent')
     Invoke-ExternalSetupCommand -Command 'winget.exe' -Arguments $arguments | Out-Null
-    $installedPackage = Get-WingetInstalledPackage -PackageId $id -Source $source
-    if ($installedPackage.installed) {
-        Register-InstalledPackage -Id $id -Source $source
+    $installed = Get-WindowsPackageState -PackageId $packageId -Source $source
+    if ($installed.installed) {
+        Register-InstalledPackage -Id $packageId -Source $source -Version ([string]$installed.version)
+        return New-ActionOutcome -Status Changed -Summary '安装完成并已复核' -Data @{ installedVersion=$installed.version }
     }
-    else {
-        Add-RollbackNote "WinGet 已返回安装成功，但无法确认软件包 $id 的登记状态；为避免误卸载，未将其加入自动卸载清单。"
-    }
-    $installedVersion = $installedPackage.version
-    $summary = if ($installedVersion) { "版本 $installedVersion" } else { '安装完成，暂时无法读取版本' }
-    return [pscustomobject]@{ summary=$summary; installedVersion=$installedVersion }
+    Add-RollbackNote "无法确认 $packageId 的安装登记状态，因此未加入自动卸载清单。"
+    return New-ActionOutcome -Status NeedsAttention -Summary '安装命令已结束，但无法确认软件已可用' -Data @{ packageId=$packageId }
 }
 
 function Test-WingetPackageUpgrade {
     param([Parameter(Mandatory)]$Action)
     $packageId = [string]$Action.parameters.packageId
     $source = [string]$Action.parameters.source
-    $fallbackVersion = if ($Action.parameters.PSObject.Properties.Name -contains 'detectedVersion') {
-        [string]$Action.parameters.detectedVersion
+    $installed = Get-WindowsPackageState -PackageId $packageId -Source $source
+    if ($installed.state -eq 'Unknown') {
+        return New-ActionOutcome -Status NeedsAttention -Summary '无法读取结构化软件包清单；未执行升级' -Data @{ currentVersion=$null; availableVersion=$null }
     }
-    else { $null }
-    if ($fallbackVersion -match '(?i)\bv?\d+(?:\.\d+){1,3}\b') { $fallbackVersion = $matches[0] }
-    # A normal read-only list includes both the installed and available version
-    # when an update exists. One query is enough for the full result.
-    $arguments = @('list', '--id', $packageId, '--exact')
-    if ($Action.parameters.source -eq 'winget') { $arguments += @('--source', 'winget') }
-    else { $arguments += @('--source', 'msstore') }
-    $arguments += @('--accept-source-agreements', '--disable-interactivity')
-    $query = Invoke-WingetReadOnlyQuery -Arguments $arguments -PackageId $packageId -Purpose '只读查询软件更新'
-    $commandOutput = @($query.lines)
-    $exitCode = $query.exitCode
-    $currentVersion = Get-WingetPackageVersionFromLines -Lines $commandOutput -PackageId $packageId
-    if (-not $currentVersion) { $currentVersion = $fallbackVersion }
-
-    if ($exitCode -ne 0) {
-        $installedText = if ($currentVersion) { "已安装 $currentVersion；" } else { '' }
-        return [pscustomobject]@{
-            updateStatus='Unknown'; summary="${installedText}暂时无法确认更新（WinGet 返回 $exitCode）；未执行升级"
-            currentVersion=$currentVersion; availableVersion=$null
-        }
+    if (-not $installed.installed) {
+        return New-ActionOutcome -Status NeedsAttention -Summary '软件包未安装，无法检查更新' -Data @{ currentVersion=$null; availableVersion=$null }
     }
-
-    $packageLine = @($commandOutput | ForEach-Object { [string]$_ } | Where-Object {
-        $_ -match [regex]::Escape($packageId)
-    } | Select-Object -First 1)
-    if ($packageLine.Count -eq 0 -or -not $currentVersion) {
-        return [pscustomobject]@{
-            updateStatus='Unknown'; summary='暂时无法读取已安装版本；未执行升级'
-            currentVersion=$currentVersion; availableVersion=$null
-        }
-    }
-
-    $availableVersion = Get-WingetPackageVersionFromLines -Lines $packageLine -PackageId $packageId -VersionKind Available
-    if (-not $availableVersion) {
-        return [pscustomobject]@{
-            updateStatus='Current'; summary="已安装 $currentVersion；未发现可用更新"
-            currentVersion=$currentVersion; availableVersion=$null
-        }
-    }
-    $versionText = if ($currentVersion -and $availableVersion) {
-        "已安装 $currentVersion；检测到待更新版本 $availableVersion"
-    }
-    elseif ($availableVersion) { "检测到待更新版本 $availableVersion" }
-    else { '已检测到新版本' }
-    return [pscustomobject]@{
-        updateStatus='Available'; summary="$versionText；本次未安装"
-        currentVersion=$currentVersion; availableVersion=$availableVersion
-    }
+    New-ActionOutcome -Status NoChange -Summary "已确认安装版本 $($installed.version)；当前策略不自动升级" -Data @{ currentVersion=$installed.version; availableVersion=$null }
 }
 
-function Set-NodeLts {
-    $fnm = Resolve-SetupCommandPath -Name 'fnm.exe' -PackageId 'Schniz.fnm'
-    if (-not $fnm) { throw 'fnm 安装后尚未出现在 PATH；请重新打开终端后重运行 Node 模块。' }
-    Invoke-ExternalSetupCommand -Command $fnm -Arguments @('install', '--lts') -Quiet | Out-Null
-    Invoke-ExternalSetupCommand -Command $fnm -Arguments @('default', 'lts-latest') -Quiet | Out-Null
-    Add-RollbackNote 'fnm 下载的 Node.js 版本不会由自动回滚删除；可用 fnm list / fnm uninstall 人工管理。'
-    $listOutput = @(& $fnm list 2>&1)
-    $version = @($listOutput | ForEach-Object { [string]$_ } | Where-Object { $_ -match '(?i)\bv?\d+\.\d+\.\d+\b' } | ForEach-Object { $matches[0] } | Select-Object -First 1)
-    $installedVersion = if ($version.Count -gt 0) { [string]$version[0] } else { $null }
-    $summary = if ($installedVersion) { "Node.js $installedVersion" } else { 'Node.js 已安装，暂时无法读取版本' }
-    return [pscustomobject]@{ summary=$summary; installedVersion=$installedVersion }
+function Get-WslRuntimeSnapshot {
+    $output = @(& wsl.exe --version 2>&1 | ForEach-Object { [string]$_ })
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne 0) { throw "无法读取 WSL 运行时版本（exit=$exitCode）。" }
+    $text = ($output -join "`n").Trim()
+    if ([string]::IsNullOrWhiteSpace($text)) { throw 'WSL 运行时版本输出为空。' }
+    [pscustomobject]@{ sha256=Get-SetupTextSha256 -Text $text; text=ConvertTo-RedactedText $text }
+}
+
+function Update-WslRuntime {
+    $before = Get-WslRuntimeSnapshot
+    Invoke-ExternalSetupCommand -Command 'wsl.exe' -Arguments @('--update') | Out-Null
+    $after = Get-WslRuntimeSnapshot
+    if ($before.sha256 -eq $after.sha256) {
+        return New-ActionOutcome -Status NoChange -Summary 'WSL 运行时已经是当前版本' -Data @{ before=$before.text; after=$after.text }
+    }
+    New-ActionOutcome -Status RestartRequired -Summary 'WSL 运行时已更新；保存 Linux 工作后关闭 WSL 再继续' -Data @{ before=$before.text; after=$after.text }
+}
+
+function Set-WslDefaultVersion2 {
+    $registryPath = 'Registry::HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Lxss'
+    $before = try {
+        $item = Get-ItemProperty -LiteralPath $registryPath -ErrorAction Stop
+        if ($item.PSObject.Properties.Name -contains 'DefaultVersion') { [int]$item.DefaultVersion } else { 2 }
+    }
+    catch [System.Management.Automation.ItemNotFoundException] { 2 }
+    catch { $null }
+    Invoke-ExternalSetupCommand -Command 'wsl.exe' -Arguments @('--set-default-version', '2') | Out-Null
+    $itemAfter = Get-ItemProperty -LiteralPath $registryPath -ErrorAction Stop
+    $after = if ($itemAfter.PSObject.Properties.Name -contains 'DefaultVersion') { [int]$itemAfter.DefaultVersion } else { 2 }
+    if ($after -ne 2) { throw '设置命令结束后，WSL 默认版本仍不是 2。' }
+    $status = if ($null -ne $before -and $before -eq 2) { 'NoChange' } else { 'Changed' }
+    New-ActionOutcome -Status $status -Summary $(if ($status -eq 'Changed') { '新发行版默认版本已改为 WSL2' } else { '新发行版已经默认使用 WSL2' }) -Data @{ before=$before; after=$after }
 }
 
 function Set-PythonWithUv {
     $uv = Resolve-SetupCommandPath -Name 'uv.exe' -PackageId 'astral-sh.uv'
-    if (-not $uv) { throw 'uv 安装后尚未出现在 PATH；请重新打开终端后重运行 Python 模块。' }
-    Invoke-ExternalSetupCommand -Command $uv -Arguments @('python', 'install') -Quiet | Out-Null
-    Add-RollbackNote 'uv 管理的 Python 解释器不会由自动回滚删除；可用 uv python list / uninstall 人工管理。'
-    $pythonPathOutput = @(& $uv python find 2>&1)
-    $pythonPath = if ($LASTEXITCODE -eq 0) { @($pythonPathOutput | ForEach-Object { [string]$_ } | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1) } else { @() }
-    $installedVersion = $null
-    if ($pythonPath.Count -gt 0) {
-        $pythonExecutable = [string]$pythonPath[0]
-        $versionOutput = @(& $pythonExecutable --version 2>&1)
-        if ($LASTEXITCODE -eq 0 -and ($versionOutput -join ' ') -match '(?i)Python\s+([0-9]+(?:\.[0-9]+){1,3})') {
-            $installedVersion = $matches[1]
-        }
+    if (-not $uv) { throw 'uv 尚未进入 Windows PATH，请重开终端后重试。' }
+    $beforeExitCode = Invoke-ExternalSetupCommand -Command $uv -Arguments @('python', 'find', '3.12') -AllowFailure -Quiet
+    Invoke-ExternalSetupCommand -Command $uv -Arguments @('python', 'install', '3.12', '--default') -Quiet | Out-Null
+    $afterOutput = @(& $uv python find 3.12 2>&1 | ForEach-Object { [string]$_ })
+    $afterExitCode = $LASTEXITCODE
+    $afterPaths = @($afterOutput | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -Unique)
+    if ($afterExitCode -ne 0 -or $afterPaths.Count -ne 1) {
+        throw 'uv 安装结束后无法定位 Python 3.12 解释器。'
     }
-    $summary = if ($installedVersion) { "Python $installedVersion" } else { 'Python 已安装，暂时无法读取版本' }
-    return [pscustomobject]@{ summary=$summary; installedVersion=$installedVersion }
-}
-
-function Set-TomlValue {
-    param(
-        [Parameter(Mandatory)][AllowEmptyCollection()][AllowEmptyString()][System.Collections.Generic.List[string]]$Lines,
-        [AllowEmptyString()][string]$Section,
-        [Parameter(Mandatory)][string]$Key,
-        [Parameter(Mandatory)][string]$Value
-    )
-    $sectionStart = 0
-    $sectionEnd = $Lines.Count
-    if ($Section) {
-        $headerPattern = '^\s*\[' + [regex]::Escape($Section) + '\]\s*(?:#.*)?$'
-        $sectionStart = -1
-        for ($i = 0; $i -lt $Lines.Count; $i++) {
-            if ($Lines[$i] -match $headerPattern) { $sectionStart = $i; break }
-        }
-        if ($sectionStart -lt 0) {
-            if ($Lines.Count -gt 0 -and $Lines[$Lines.Count - 1] -ne '') { [void]$Lines.Add('') }
-            [void]$Lines.Add("[$Section]")
-            $sectionStart = $Lines.Count - 1
-            $sectionEnd = $Lines.Count
-        }
-        else {
-            $sectionEnd = $Lines.Count
-            for ($i = $sectionStart + 1; $i -lt $Lines.Count; $i++) {
-                if ($Lines[$i] -match '^\s*\[') { $sectionEnd = $i; break }
-            }
-        }
-    }
-    else {
-        $sectionStart = -1
-        for ($i = 0; $i -lt $Lines.Count; $i++) {
-            if ($Lines[$i] -match '^\s*\[') { $sectionEnd = $i; break }
-        }
-    }
-
-    $keyPattern = '^\s*' + [regex]::Escape($Key) + '\s*='
-    for ($i = $sectionStart + 1; $i -lt $sectionEnd; $i++) {
-        if ($Lines[$i] -match $keyPattern) {
-            $Lines[$i] = "$Key = $Value # managed by CodexDevSetup"
-            return
-        }
-    }
-    $Lines.Insert($sectionEnd, "$Key = $Value # managed by CodexDevSetup")
-}
-
-function Set-IniValue {
-    param(
-        [Parameter(Mandatory)][AllowEmptyCollection()][AllowEmptyString()][System.Collections.Generic.List[string]]$Lines,
-        [Parameter(Mandatory)][string]$Section,
-        [Parameter(Mandatory)][string]$Key,
-        [Parameter(Mandatory)][string]$Value
-    )
-    $sectionStart = -1
-    $sectionEnd = $Lines.Count
-    $headerPattern = '^\s*\[' + [regex]::Escape($Section) + '\]\s*(?:[;#].*)?$'
-    for ($i = 0; $i -lt $Lines.Count; $i++) {
-        if ($Lines[$i] -match $headerPattern) { $sectionStart = $i; break }
-    }
-    if ($sectionStart -lt 0) {
-        if ($Lines.Count -gt 0 -and $Lines[$Lines.Count - 1] -ne '') { [void]$Lines.Add('') }
-        [void]$Lines.Add("[$Section]")
-        $sectionStart = $Lines.Count - 1
-        $sectionEnd = $Lines.Count
-    }
-    else {
-        for ($i = $sectionStart + 1; $i -lt $Lines.Count; $i++) {
-            if ($Lines[$i] -match '^\s*\[') { $sectionEnd = $i; break }
-        }
-    }
-    $keyPattern = '^\s*' + [regex]::Escape($Key) + '\s*='
-    for ($i = $sectionStart + 1; $i -lt $sectionEnd; $i++) {
-        if ($Lines[$i] -match $keyPattern) {
-            $Lines[$i] = "$Key=$Value"
-            return
-        }
-    }
-    $Lines.Insert($sectionEnd, "$Key=$Value")
+    Add-RollbackNote 'uv 管理的 Python 解释器不由自动回滚删除。'
+    $changed = $beforeExitCode -ne 0
+    New-ActionOutcome -Status $(if ($changed) { 'Changed' } else { 'NoChange' }) `
+        -Summary $(if ($changed) { 'Windows Python 3.12 已由 uv 准备' } else { 'uv 已管理 Windows Python 3.12' }) `
+        -Data @{ interpreter=(ConvertTo-RedactedText $afterPaths[0]) }
 }
 
 function Quote-TomlString {
     param([Parameter(Mandatory)][string]$Value)
-    $escaped = $Value.Replace('\', '\\').Replace('"', '\"')
-    $escaped = $escaped.Replace("`b", '\b').Replace("`t", '\t').Replace("`n", '\n').Replace("`f", '\f').Replace("`r", '\r')
-    return '"' + $escaped + '"'
+    return '"' + $Value.Replace('\', '\\').Replace('"', '\"') + '"'
 }
 
 function Assert-CodexConfigValues {
@@ -347,17 +192,14 @@ function Assert-CodexConfigValues {
         sandboxMode=@('read-only', 'workspace-write', 'danger-full-access')
         windowsSandbox=@('unelevated', 'elevated')
         webSearch=@('disabled', 'cached', 'indexed', 'live')
-        personality=@('', 'none', 'friendly', 'pragmatic')
-        reasoningEffort=@('', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra')
     }
     foreach ($entry in $allowed.GetEnumerator()) {
-        $value = [string]$Config.codex.($entry.Key)
-        if ($value -notin $entry.Value) {
-            throw "Codex 配置值无效：$($entry.Key)=$value"
+        if ([string]$Config.codex.($entry.Key) -notin $entry.Value) {
+            throw "Codex 配置值无效：$($entry.Key)=$($Config.codex.($entry.Key))"
         }
     }
-    foreach ($booleanName in @('checkForUpdateOnStartup', 'networkAccess')) {
-        if ($Config.codex.$booleanName -isnot [bool]) { throw "Codex 配置值必须是布尔值：$booleanName" }
+    foreach ($name in @('checkForUpdateOnStartup', 'networkAccess')) {
+        if ($Config.codex.$name -isnot [bool]) { throw "Codex 配置必须是布尔值：$name" }
     }
 }
 
@@ -365,522 +207,471 @@ function Assert-SupportedCodexTomlShape {
     param([AllowEmptyString()][string]$Content)
     if ([string]::IsNullOrWhiteSpace($Content)) { return }
     if ($Content -match "'''" -or $Content -match '"""') {
-        throw '现有 config.toml 含多行字符串；为避免误改，本工具不会自动合并，请先改为普通字符串或手动配置。'
+        throw 'config.toml 含多行字符串，无法安全更新目标键。'
+    }
+    foreach ($key in @('approval_policy', 'sandbox_mode', 'web_search', 'check_for_update_on_startup', 'sandbox', 'sandbox_private_desktop', 'network_access')) {
+        if ($Content -match ('(?m)^\s*["'']' + [regex]::Escape($key) + '["'']\s*=')) {
+            throw "config.toml 使用带引号的受管键 $key，无法安全更新。"
+        }
     }
     foreach ($section in @('windows', 'sandbox_workspace_write')) {
         if ($Content -match ('(?m)^\s*' + [regex]::Escape($section) + '\s*=') -or
             $Content -match ('(?m)^\s*' + [regex]::Escape($section) + '\s*\.')) {
-            throw "现有 config.toml 使用 $section 的 inline table 或 dotted key；为避免生成重复定义，本工具不会自动合并。"
+            throw "config.toml 使用 $section inline table 或 dotted key，无法安全更新。"
         }
-        $headerMatches = [regex]::Matches($Content, ('(?m)^\s*\[\[?\s*["'']?' + [regex]::Escape($section) + '["'']?\s*\]\]?\s*(?:#.*)?$'))
-        if ($headerMatches.Count -gt 1 -or ($headerMatches.Count -eq 1 -and $headerMatches[0].Value -match '^\s*\[\[')) {
-            throw "现有 config.toml 中 $section 表重复或使用数组表；本工具不会自动合并。"
+        $headers = [regex]::Matches($Content, ('(?m)^\s*\[\s*["'']?' + [regex]::Escape($section) + '["'']?\s*\]\s*(?:#.*)?$'))
+        if ($headers.Count -gt 1) { throw "config.toml 重复定义 [$section]。" }
+        if ($Content -match ('(?m)^\s*\[\[\s*["'']?' + [regex]::Escape($section) + '["'']?\s*\]\]')) {
+            throw "config.toml 将 $section 定义为数组表，无法安全更新。"
         }
     }
 }
 
-function Assert-TomlParsesWhenPythonAvailable {
-    param([Parameter(Mandatory)][string]$Content)
-    $python = Get-Command python.exe -All -ErrorAction SilentlyContinue | Where-Object {
-        $_.Source -and $_.Source -notmatch '(?i)\\WindowsApps\\' -and (Test-Path -LiteralPath $_.Source -PathType Leaf)
-    } | Select-Object -First 1
-    if ($null -eq $python) { return }
-    $temporaryPath = [System.IO.Path]::GetTempFileName()
-    try {
-        Set-Content -LiteralPath $temporaryPath -Value $Content -Encoding utf8NoBOM
-        $parseOutput = @(& $python.Source -c 'import sys,tomllib; tomllib.load(open(sys.argv[1], "rb"))' $temporaryPath 2>&1)
-        if ($LASTEXITCODE -ne 0) {
-            throw "生成后的 config.toml 未通过 TOML 解析：$(@($parseOutput | Select-Object -Last 1) -join '')"
+function Set-TomlValue {
+    param(
+        [Parameter(Mandatory)][System.Collections.Generic.List[string]]$Lines,
+        [AllowEmptyString()][string]$Section,
+        [Parameter(Mandatory)][string]$Key,
+        [Parameter(Mandatory)][string]$Value
+    )
+    $start = -1
+    $end = $Lines.Count
+    if ($Section) {
+        $headerPattern = '^\s*\[\s*["'']?' + [regex]::Escape($Section) + '["'']?\s*\]\s*(?:#.*)?$'
+        for ($index = 0; $index -lt $Lines.Count; $index++) {
+            if ($Lines[$index] -match $headerPattern) { $start = $index; break }
+        }
+        if ($start -lt 0) {
+            if ($Lines.Count -gt 0 -and $Lines[$Lines.Count - 1]) { [void]$Lines.Add('') }
+            [void]$Lines.Add("[$Section]")
+            $start = $Lines.Count - 1
+            $end = $Lines.Count
+        }
+        else {
+            for ($index = $start + 1; $index -lt $Lines.Count; $index++) {
+                if ($Lines[$index] -match '^\s*\[') { $end = $index; break }
+            }
         }
     }
-    finally { Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue }
+    else {
+        for ($index = 0; $index -lt $Lines.Count; $index++) {
+            if ($Lines[$index] -match '^\s*\[') { $end = $index; break }
+        }
+    }
+    $keyPattern = '^\s*' + [regex]::Escape($Key) + '\s*='
+    $keyIndexes = [System.Collections.Generic.List[int]]::new()
+    for ($index = $start + 1; $index -lt $end; $index++) {
+        if ($Lines[$index] -match $keyPattern) { $keyIndexes.Add($index) }
+    }
+    if ($keyIndexes.Count -gt 1) { throw "config.toml 重复定义 $Key。" }
+    if ($keyIndexes.Count -eq 1) { $Lines[$keyIndexes[0]] = "$Key = $Value"; return }
+    $Lines.Insert($end, "$Key = $Value")
 }
 
 function Set-CodexGlobalConfig {
     param([Parameter(Mandatory)]$Config)
     Assert-CodexConfigValues -Config $Config
     $path = Join-Path $env:USERPROFILE '.codex\config.toml'
-    $existing = if (Test-Path -LiteralPath $path) { Get-Content -LiteralPath $path -Raw -Encoding utf8 } else { '' }
+    $existing = if (Test-Path -LiteralPath $path -PathType Leaf) { Get-Content -LiteralPath $path -Raw -Encoding utf8 } else { '' }
     Assert-SupportedCodexTomlShape -Content $existing
     $lines = [System.Collections.Generic.List[string]]::new()
-    foreach ($line in @($existing -split "`r?`n")) { $lines.Add($line) }
-    while ($lines.Count -gt 0 -and $lines[$lines.Count - 1] -eq '') { $lines.RemoveAt($lines.Count - 1) }
-    if ($lines.Count -eq 0) { $lines.Add('# Codex user configuration') }
-
-    Set-TomlValue -Lines $lines -Section '' -Key 'approval_policy' -Value (Quote-TomlString $Config.codex.approvalPolicy)
-    Set-TomlValue -Lines $lines -Section '' -Key 'sandbox_mode' -Value (Quote-TomlString $Config.codex.sandboxMode)
-    Set-TomlValue -Lines $lines -Section '' -Key 'web_search' -Value (Quote-TomlString $Config.codex.webSearch)
-    Set-TomlValue -Lines $lines -Section '' -Key 'check_for_update_on_startup' -Value $(if ($Config.codex.checkForUpdateOnStartup) { 'true' } else { 'false' })
-    if ($Config.codex.personality) { Set-TomlValue -Lines $lines -Section '' -Key 'personality' -Value (Quote-TomlString $Config.codex.personality) }
-    if ($Config.codex.reasoningEffort) { Set-TomlValue -Lines $lines -Section '' -Key 'model_reasoning_effort' -Value (Quote-TomlString $Config.codex.reasoningEffort) }
-    if ($Config.codex.model) { Set-TomlValue -Lines $lines -Section '' -Key 'model' -Value (Quote-TomlString $Config.codex.model) }
-    Set-TomlValue -Lines $lines -Section 'windows' -Key 'sandbox' -Value (Quote-TomlString $Config.codex.windowsSandbox)
+    foreach ($line in @($existing -split "`r?`n")) { [void]$lines.Add($line) }
+    while ($lines.Count -gt 0 -and -not $lines[$lines.Count - 1]) { $lines.RemoveAt($lines.Count - 1) }
+    Set-TomlValue -Lines $lines -Section '' -Key 'approval_policy' -Value (Quote-TomlString ([string]$Config.codex.approvalPolicy))
+    Set-TomlValue -Lines $lines -Section '' -Key 'sandbox_mode' -Value (Quote-TomlString ([string]$Config.codex.sandboxMode))
+    Set-TomlValue -Lines $lines -Section '' -Key 'web_search' -Value (Quote-TomlString ([string]$Config.codex.webSearch))
+    Set-TomlValue -Lines $lines -Section '' -Key 'check_for_update_on_startup' -Value (($Config.codex.checkForUpdateOnStartup).ToString().ToLowerInvariant())
+    Set-TomlValue -Lines $lines -Section 'windows' -Key 'sandbox' -Value (Quote-TomlString ([string]$Config.codex.windowsSandbox))
     Set-TomlValue -Lines $lines -Section 'windows' -Key 'sandbox_private_desktop' -Value 'true'
-    if ($Config.codex.sandboxMode -eq 'workspace-write') {
-        Set-TomlValue -Lines $lines -Section 'sandbox_workspace_write' -Key 'network_access' -Value $(if ($Config.codex.networkAccess) { 'true' } else { 'false' })
-    }
-    $content = $lines -join [Environment]::NewLine
-    Assert-TomlParsesWhenPythonAvailable -Content $content
-    Set-SetupFileContent -Path $path -Content $content -Description '更新 Codex 用户级 config.toml' | Out-Null
-
-    $fileAccessText = switch ($Config.codex.sandboxMode) {
-        'read-only' { '只读检查，不修改文件' }
-        'workspace-write' { '可以修改当前项目，不能越过项目边界' }
-        'danger-full-access' { '可以访问当前项目之外的位置（仅适合完全可信的项目）' }
-        default { "文件访问方式：$($Config.codex.sandboxMode)" }
-    }
-    $approvalText = switch ($Config.codex.approvalPolicy) {
-        'on-request' { '需要额外权限时先询问' }
-        'untrusted' { '不受信任的操作先询问' }
-        'never' { '执行时不再询问' }
-        default { "操作确认方式：$($Config.codex.approvalPolicy)" }
-    }
-    $windowsText = if ($Config.codex.windowsSandbox -eq 'unelevated') { 'Windows 使用标准权限' } else { 'Windows 使用增强隔离权限' }
-    $webText = if ($Config.codex.webSearch -eq 'live') { '允许实时联网搜索' } else { "联网搜索：$($Config.codex.webSearch)" }
-    Write-Host '    已应用 Codex 工作方式：' -ForegroundColor DarkCyan
-    Write-Host "      · $fileAccessText"
-    Write-Host "      · $approvalText；$windowsText；$webText"
-    Write-Host "      · 配置文件：$path" -ForegroundColor DarkGray
-    Write-Host '      · 修改前的文件已备份，可从首页选择撤销。' -ForegroundColor DarkGray
+    Set-TomlValue -Lines $lines -Section 'sandbox_workspace_write' -Key 'network_access' -Value (($Config.codex.networkAccess).ToString().ToLowerInvariant())
+    $changed = Set-SetupFileContent -Path $path -Content ($lines -join [Environment]::NewLine) -Description '设置 Windows Codex 用户配置' -ManagedKind CodexConfig
+    New-ActionOutcome -Status $(if ($changed) { 'Changed' } else { 'NoChange' }) -Summary $(if ($changed) { 'Codex 用户配置已更新' } else { 'Codex 用户配置已是目标状态' }) -Data @{ path=$path }
 }
 
-function Read-ProxyPort {
-    param([Parameter(Mandatory)][string]$Label, [Parameter(Mandatory)][int]$DefaultPort)
-    while ($true) {
-        $raw = (Read-Host "$Label（直接按 Enter 使用 $DefaultPort）").Trim()
-        if ([string]::IsNullOrWhiteSpace($raw)) { return $DefaultPort }
-        $port = 0
-        if ([int]::TryParse($raw, [ref]$port) -and $port -ge 1 -and $port -le 65535) { return $port }
-        Write-SetupStatus -Kind Warning -Message '端口必须是 1–65535 之间的整数。'
+function Set-GlobalAgents {
+    param([Parameter(Mandatory)]$Action)
+    $mode = [string]$Action.parameters.mode
+    $templateName = switch ($mode) {
+        'WslFirst' { 'AGENTS.wsl.md.template' }
+        'WindowsNative' { 'AGENTS.windows.md.template' }
+        default { throw "不支持的环境模式：$mode" }
     }
+    $templatePath = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\templates\global\$templateName"))
+    $content = Get-Content -LiteralPath $templatePath -Raw -Encoding utf8
+    $path = Join-Path $env:USERPROFILE '.codex\AGENTS.md'
+    $changed = Set-SetupFileContent -Path $path -Content $content -Description '设置 Windows Codex 全局 AGENTS.md' -ManagedKind GlobalAgents
+    New-ActionOutcome -Status $(if ($changed) { 'Changed' } else { 'NoChange' }) -Summary $(if ($changed) { '全局开发环境规则已更新' } else { '全局开发环境规则已是目标状态' }) -Data @{ path=$path }
 }
 
-function Select-WslNetworkConfiguration {
-    param([Parameter(Mandatory)]$Config, [Parameter(Mandatory)]$Detection)
-    $network = $Config.wslNetworking
-    $detected = $Detection.wslNetwork
-    $defaultHttpPort = if ($null -ne $detected) { [int]$detected.recommendedHttpPort } else { 10808 }
-    $defaultSocksPort = if ($null -ne $detected) { [int]$detected.recommendedSocksPort } else { $defaultHttpPort }
-    Write-Host ''
-    Write-Host '  可选：配置 WSL 网络与 v2rayN 代理' -ForegroundColor Cyan
-    $currentNetworkMode = if ($null -ne $detected) { [string]$detected.networkingMode } else { '未检测' }
-    Write-Host "    当前网络模式：$currentNetworkMode"
-    $listenerPorts = @()
-    if ($null -ne $detected) {
-        $listenerPorts = @($detected.loopbackListeners | ForEach-Object { $_.LocalPort } | Sort-Object -Unique)
+function Set-IniValue {
+    param(
+        [Parameter(Mandatory)][System.Collections.Generic.List[string]]$Lines,
+        [Parameter(Mandatory)][string]$Section,
+        [Parameter(Mandatory)][string]$Key,
+        [Parameter(Mandatory)][string]$Value
+    )
+    $header = '(?i)^\s*\[' + [regex]::Escape($Section) + '\]\s*(?:[;#].*)?$'
+    $start = -1
+    $end = $Lines.Count
+    for ($index = 0; $index -lt $Lines.Count; $index++) {
+        if ($Lines[$index] -match $header) { $start = $index; break }
     }
-    if ($listenerPorts.Count -gt 0) {
-        Write-Host "    检测到 Windows localhost 候选端口：$($listenerPorts -join '、')" -ForegroundColor DarkGray
-        Write-Host '    端口监听不代表协议；请以 v2rayN 界面中的 HTTP/Mixed 与 SOCKS 端口为准。' -ForegroundColor DarkGray
+    if ($start -lt 0) {
+        if ($Lines.Count -gt 0 -and $Lines[$Lines.Count - 1]) { [void]$Lines.Add('') }
+        [void]$Lines.Add("[$Section]")
+        $start = $Lines.Count - 1
+        $end = $Lines.Count
     }
-    $wildcardListeners = @()
-    if ($null -ne $detected -and $null -ne $detected.PSObject.Properties['wildcardListeners']) {
-        $wildcardListeners = @($detected.wildcardListeners)
+    else {
+        for ($index = $start + 1; $index -lt $Lines.Count; $index++) {
+            if ($Lines[$index] -match '^\s*\[') { $end = $index; break }
+        }
     }
-    if ($wildcardListeners.Count -gt 0) {
-        Write-SetupStatus -Kind Warning -Message '检测到候选代理端口监听在 0.0.0.0 或 ::；请在 v2rayN 中关闭“允许来自局域网的连接”。'
+    $keyPattern = '(?i)^\s*' + [regex]::Escape($Key) + '\s*='
+    for ($index = $start + 1; $index -lt $end; $index++) {
+        if ($Lines[$index] -match $keyPattern) {
+            $Lines[$index] = "$Key=$Value"
+            return
+        }
     }
-    Write-Host '    [1] 推荐：mirrored + 持久代理'
-    Write-Host '        Codex 独立启动的 WSL 进程也会加载代理；本工具不会开启 v2rayN LAN。' -ForegroundColor DarkGray
-    Write-Host '    [2] mirrored + 关闭本工具持久代理'
-    Write-Host '        同时移除本工具管理的持久代理；不影响 v2rayN 自身设置。' -ForegroundColor DarkGray
-    Write-Host '    [3/Enter] 保持现状'
-    while ($true) {
-        $choice = (Read-Host '  请选择').Trim().ToUpperInvariant()
-        switch ($choice) {
-            '1' {
-                $network.configure = $true
-                $network.networkingMode = 'mirrored'
-                $network.proxyMode = 'persistent'
-                $network.proxyHost = '127.0.0.1'
-                $network.httpPort = Read-ProxyPort -Label '  HTTP 或 Mixed 端口' -DefaultPort $defaultHttpPort
-                $network.socksPort = Read-ProxyPort -Label '  SOCKS 或 Mixed 端口' -DefaultPort $defaultSocksPort
-                Write-SetupStatus -Kind Warning -Message '持久代理启用后，请先启动 v2rayN 再启动 Codex。'
-                return
+    $Lines.Insert($end, "$Key=$Value")
+}
+
+function Assert-SupportedWslConfigShape {
+    param([AllowEmptyString()][string]$Content)
+    if ([string]::IsNullOrWhiteSpace($Content)) { return }
+    $lines = @($Content -split "`r?`n")
+    $sectionCount = @($lines | Where-Object { $_ -match '(?i)^\s*\[wsl2\]\s*(?:[;#].*)?$' }).Count
+    if ($sectionCount -gt 1) { throw '.wslconfig 重复定义 [wsl2]，无法安全更新。' }
+    $currentSection = ''
+    $counts = @{}
+    foreach ($line in $lines) {
+        if ($line -match '^\s*\[([^\]]+)\]\s*(?:[;#].*)?$') {
+            $currentSection = $matches[1].Trim()
+            continue
+        }
+        if ($currentSection -ieq 'wsl2' -and $line -match '^\s*([A-Za-z][A-Za-z0-9]*)\s*=') {
+            $key = $matches[1].ToLowerInvariant()
+            if ($key -in @('networkingmode', 'dnstunneling', 'autoproxy', 'firewall')) {
+                $counts[$key] = 1 + [int]$counts[$key]
+                if ($counts[$key] -gt 1) { throw ".wslconfig 在 [wsl2] 中重复定义 $key，无法安全更新。" }
             }
-            '2' {
-                $network.configure = $true
-                $network.networkingMode = 'mirrored'
-                $network.proxyMode = 'none'
-                return
-            }
-            { $_ -in @('', '3') } {
-                $network.configure = $false
-                return
-            }
-            default { Write-SetupStatus -Kind Warning -Message "无效选项：$choice" }
         }
     }
 }
 
 function Set-WslNetworkingConfig {
     param([Parameter(Mandatory)]$Config)
-    $network = $Config.wslNetworking
-    if ([string]$network.networkingMode -ne 'mirrored') { throw '当前版本只自动配置安全的 WSL mirrored networking。' }
+    $network = $Config.wsl.networking
+    if ([string]$network.networkingMode -notin @('nat', 'mirrored')) { throw "不支持的 WSL networkingMode：$($network.networkingMode)" }
     $path = Join-Path $env:USERPROFILE '.wslconfig'
     $existing = if (Test-Path -LiteralPath $path) { Get-Content -LiteralPath $path -Raw -Encoding utf8 } else { '' }
+    Assert-SupportedWslConfigShape -Content $existing
     $lines = [System.Collections.Generic.List[string]]::new()
     foreach ($line in @($existing -split "`r?`n")) { [void]$lines.Add($line) }
-    while ($lines.Count -gt 0 -and $lines[$lines.Count - 1] -eq '') { $lines.RemoveAt($lines.Count - 1) }
-    Set-IniValue -Lines $lines -Section 'wsl2' -Key 'networkingMode' -Value 'mirrored'
+    while ($lines.Count -gt 0 -and -not $lines[$lines.Count - 1]) { $lines.RemoveAt($lines.Count - 1) }
+    Set-IniValue -Lines $lines -Section 'wsl2' -Key 'networkingMode' -Value ([string]$network.networkingMode)
     Set-IniValue -Lines $lines -Section 'wsl2' -Key 'dnsTunneling' -Value $network.dnsTunneling.ToString().ToLowerInvariant()
     Set-IniValue -Lines $lines -Section 'wsl2' -Key 'autoProxy' -Value $network.autoProxy.ToString().ToLowerInvariant()
     Set-IniValue -Lines $lines -Section 'wsl2' -Key 'firewall' -Value $network.firewall.ToString().ToLowerInvariant()
-    $timeout = [int]$network.initialAutoProxyTimeoutMs
-    if ($timeout -lt 0 -or $timeout -gt 60000) { throw 'initialAutoProxyTimeoutMs 必须在 0–60000 之间。' }
-    Set-IniValue -Lines $lines -Section 'experimental' -Key 'initialAutoProxyTimeout' -Value ([string]$timeout)
-    $changed = Set-SetupFileContent -Path $path -Content ($lines -join [Environment]::NewLine) -Description '更新 WSL 全局网络配置'
-    Write-Host "    $(if ($changed) { '已更新' } else { '已符合目标配置' })：$path" -ForegroundColor DarkGray
+    $changed = Set-SetupFileContent -Path $path -Content ($lines -join [Environment]::NewLine) -Description '设置 WSL networking' -ManagedKind WslConfig
+    New-ActionOutcome -Status $(if ($changed) { 'RestartRequired' } else { 'NoChange' }) -Summary $(if ($changed) { 'WSL 网络设置已更新；保存 WSL 工作后执行 shutdown 并继续验收' } else { 'WSL 网络设置已是目标状态' }) -Data @{ networkingMode=$network.networkingMode }
 }
 
-function Invoke-WslNetworkSetup {
-    param([Parameter(Mandatory)]$Action, [Parameter(Mandatory)]$Config)
-    $proxyMode = [string]$Config.wslNetworking.proxyMode
-    if ($proxyMode -notin @('persistent', 'none')) { throw "不支持的 WSL 代理模式：$proxyMode" }
-    if ([string]$Config.wslNetworking.proxyHost -ne '127.0.0.1') { throw 'mirrored 模式只允许自动配置 127.0.0.1 代理。' }
-    foreach ($portName in @('httpPort', 'socksPort')) {
-        $port = [int]$Config.wslNetworking.$portName
-        if ($port -lt 1 -or $port -gt 65535) { throw "$portName 必须在 1–65535 之间。" }
+function Set-WindowsGitBaseline {
+    $path = Join-Path $env:USERPROFILE '.gitconfig'
+    $git = Resolve-SetupCommandPath -Name 'git.exe' -PackageId 'Git.Git'
+    if (-not $git) { throw 'Git for Windows 已登记，但无法解析 git.exe；请重新打开终端后重试。' }
+    $desired = [ordered]@{
+        'init.defaultBranch'='main'
+        'fetch.prune'='true'
+        'pull.ff'='only'
+        'core.autocrlf'='input'
+        'core.safecrlf'='warn'
+        'credential.helper'='manager'
     }
-    $distro = [string]$Action.parameters.distro
-    $helper = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\wsl\setup.sh'))
-    $helperWsl = Convert-WindowsPathToWsl -Path $helper -ExpectedDistro $distro
-    $commonArguments = @(
-        '-d', $distro, '--', 'bash', $helperWsl, '--network-only',
-        '--proxy-mode', $proxyMode, '--proxy-host', [string]$Config.wslNetworking.proxyHost,
-        '--proxy-http-port', [string]$Config.wslNetworking.httpPort,
-        '--proxy-socks-port', [string]$Config.wslNetworking.socksPort
-    )
-    if ($Config.codex.shareWindowsHomeToWsl) {
-        $codexHomeWsl = Convert-WindowsPathToWsl (Join-Path $env:USERPROFILE '.codex')
-        $commonArguments += @('--share-codex-home', $codexHomeWsl)
+    $temporaryPath = Join-Path ([System.IO.Path]::GetTempPath()) ("codex-dev-setup-git-{0}.config" -f [guid]::NewGuid().ToString('N'))
+    $previousGlobalConfig = $env:GIT_CONFIG_GLOBAL
+    try {
+        if (Test-Path -LiteralPath $path -PathType Leaf) { Copy-Item -LiteralPath $path -Destination $temporaryPath -Force }
+        else { [System.IO.File]::WriteAllText($temporaryPath, '', [Text.UTF8Encoding]::new($false)) }
+        $env:GIT_CONFIG_GLOBAL = $temporaryPath
+        foreach ($entry in $desired.GetEnumerator()) {
+            Invoke-ExternalSetupCommand -Command $git -Arguments @('config', '--global', $entry.Key, $entry.Value) -Quiet | Out-Null
+        }
+        $targetContent = Get-Content -LiteralPath $temporaryPath -Raw -Encoding utf8
     }
-    # The helper's preview validates its arguments, distro/path, and every managed
-    # marker without changing WSL files. Only then update the Windows-side config.
-    $preflightArguments = @($commonArguments[0..4]) + @('--what-if') + @($commonArguments[5..($commonArguments.Count - 1)])
-    Invoke-ExternalSetupCommand -Command 'wsl.exe' -Arguments $preflightArguments -Quiet | Out-Null
-    Set-WslNetworkingConfig -Config $Config
-    $arguments = @($commonArguments[0..4]) + @('--apply') + @($commonArguments[5..($commonArguments.Count - 1)])
-    Invoke-InteractiveExternalSetupCommand -Command 'wsl.exe' -Arguments $arguments | Out-Null
-    if ($proxyMode -eq 'persistent') {
-        Write-Host '    已确认 ~/.config/codex/proxy.sh 由 ~/.profile 与 ~/.bashrc 持久加载。' -ForegroundColor DarkCyan
+    finally {
+        $env:GIT_CONFIG_GLOBAL = $previousGlobalConfig
+        if (Test-Path -LiteralPath $temporaryPath -PathType Leaf) { Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue }
     }
-    else {
-        Write-Host '    已保留 mirrored 网络，并关闭本工具管理的 WSL 持久代理。' -ForegroundColor DarkCyan
-    }
-    Write-Host '    请保存 WSL 中的工作，随后运行 wsl --shutdown，再重新打开 Codex。' -ForegroundColor Yellow
-    Add-RollbackNote '.wslconfig 已纳入本次 Windows 回滚清单；WSL 代理变更可用 wsl/setup.sh --rollback --network-only 删除。'
-}
-
-function Set-GitBaseline {
-    $gitConfig = Join-Path $env:USERPROFILE '.gitconfig'
-    Backup-SetupFile -Path $gitConfig | Out-Null
-    $settings = [ordered]@{
-        'init.defaultBranch' = 'main'
-        'fetch.prune'        = 'true'
-        'pull.ff'            = 'only'
-        'core.autocrlf'      = 'false'
-        'core.safecrlf'      = 'warn'
-        'credential.helper'  = 'manager'
-    }
-    foreach ($entry in $settings.GetEnumerator()) {
-        Invoke-ExternalSetupCommand -Command 'git.exe' -Arguments @('config', '--global', $entry.Key, $entry.Value) | Out-Null
-    }
-}
-
-function Get-ManagedBlockContent {
-    param(
-        [AllowEmptyString()][string]$Existing,
-        [Parameter(Mandatory)][string]$Name,
-        [Parameter(Mandatory)][string]$Body,
-        [string]$CommentPrefix = '#'
-    )
-    $start = "$CommentPrefix >>> CodexDevSetup:$Name >>>"
-    $end = "$CommentPrefix <<< CodexDevSetup:$Name <<<"
-    $pattern = '(?ms)^' + [regex]::Escape($start) + '.*?^' + [regex]::Escape($end) + '\s*'
-    $clean = [regex]::Replace($Existing, $pattern, '').TrimEnd()
-    $block = "$start`n$($Body.Trim())`n$end"
-    if ($clean) { return "$clean`n`n$block`n" }
-    return "$block`n"
-}
-
-function Set-PowerShellDeveloperProfile {
-    param([Parameter(Mandatory)][string]$WindowsProjects)
-    $profilePath = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'PowerShell\profile.ps1'
-    $existing = if (Test-Path -LiteralPath $profilePath) { Get-Content -LiteralPath $profilePath -Raw -Encoding utf8 } else { '' }
-    $windowsProjectsLiteral = "'" + $WindowsProjects.Replace("'", "''") + "'"
-    $body = @'
-if (Get-Command fnm -ErrorAction SilentlyContinue) {
-    fnm env --use-on-cd --shell powershell | Out-String | Invoke-Expression
-}
-function gst { git status --short --branch @args }
-function gdf { git diff @args }
-function cproj { Set-Location -LiteralPath __WINDOWS_PROJECTS__ }
-function wproj { wsl.exe --cd '~' }
-'@
-    $body = $body.Replace('__WINDOWS_PROJECTS__', $windowsProjectsLiteral)
-    $content = Get-ManagedBlockContent -Existing $existing -Name 'PowerShellProfile' -Body $body
-    Set-SetupFileContent -Path $profilePath -Content $content -Description '更新 PowerShell 7 开发快捷命令' | Out-Null
-    Write-Host '    已添加 PowerShell 7 快捷功能：' -ForegroundColor DarkCyan
-    Write-Host '      · 进入项目文件夹时，自动切换项目需要的 Node.js 版本。'
-    Write-Host '      · gst：查看 Git 状态；gdf：查看代码差异。'
-    Write-Host '      · cproj：进入 Windows 项目目录；wproj：打开 WSL/Linux。'
-    Write-Host "      · 配置文件：$profilePath" -ForegroundColor DarkGray
-    Write-Host '      · 只更新本工具标记的区块，不覆盖原有快捷命令。' -ForegroundColor DarkGray
-}
-
-function Set-TerminalFragment {
-    param(
-        [string]$Distro = 'Ubuntu',
-        [Parameter(Mandatory)][string]$WindowsProjects
-    )
-    $path = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows Terminal\Fragments\CodexDevSetup\codex.json'
-    $fragment = [ordered]@{
-        profiles = @(
-            [ordered]@{
-                name = 'Codex Windows (PowerShell 7)'
-                guid = '{2c4b1c53-58df-4b35-b2ab-3cbf5e9c7d01}'
-                commandline = 'pwsh.exe -NoLogo'
-                startingDirectory = $WindowsProjects
-            },
-            [ordered]@{
-                name = 'Codex WSL (Ubuntu)'
-                guid = '{49e8ae7a-3d8c-4a1e-a08f-9490e1d7e102}'
-                commandline = "wsl.exe -d $Distro --cd ~"
-                startingDirectory = '~'
-            }
-        )
-    }
-    $content = $fragment | ConvertTo-Json -Depth 10
-    Set-SetupFileContent -Path $path -Content $content -Description '创建 Windows Terminal Codex profiles fragment' | Out-Null
-    Write-Host '    已添加两个 Windows Terminal 启动项：' -ForegroundColor DarkCyan
-    Write-Host '      · Codex Windows：使用 PowerShell 7，从 Windows 项目目录启动。'
-    Write-Host "      · Codex WSL：使用 $Distro，从 Linux 主目录启动。"
-    Write-Host "      · 配置文件：$path" -ForegroundColor DarkGray
-    Write-Host '      · 使用 Terminal 官方扩展文件，不覆盖现有终端设置。' -ForegroundColor DarkGray
+    $changed = Set-SetupFileContent -Path $path -Content $targetContent -Description '设置 Windows Git 基线' -ManagedKind GitConfig
+    New-ActionOutcome -Status $(if ($changed) { 'Changed' } else { 'NoChange' }) -Summary $(if ($changed) { 'Windows Git 基线已更新' } else { 'Windows Git 基线已是目标状态' }) -Data $null
 }
 
 function Select-CodexConfigurationPreset {
     param([Parameter(Mandatory)]$Config)
-
     while ($true) {
         Write-Host ''
         Write-Host '  选择 Codex 工作方式' -ForegroundColor Cyan
-        Write-Host '    [1/Enter] 日常开发（推荐）'
-        Write-Host '              可以修改当前项目；需要额外权限时先询问。' -ForegroundColor DarkGray
-        Write-Host '    [2]       只读检查'
-        Write-Host '              可以阅读和分析，但不修改文件。' -ForegroundColor DarkGray
-        Write-Host '    [3]       可信项目完全访问'
-        Write-Host '              可以访问项目之外的位置；仅用于完全可信的个人项目。' -ForegroundColor Yellow
-        Write-Host '    [B]       返回，不设置 Codex'
-        $choice = (Read-Host '  请选择').Trim().ToUpperInvariant()
-        switch ($choice) {
+        Write-Host '    [1/Enter] workspace-write + on-request'
+        Write-Host '    [2]       read-only + on-request'
+        Write-Host '    [3]       danger-full-access + on-request'
+        Write-Host '    [B]       返回'
+        switch ((Read-Host '  请选择').Trim().ToUpperInvariant()) {
             { $_ -in @('', '1') } {
                 $Config.codex.sandboxMode = 'workspace-write'
                 $Config.codex.approvalPolicy = 'on-request'
-                $Config.codex.windowsSandbox = 'unelevated'
-                $Config.codex.webSearch = 'live'
-                $Config.codex.networkAccess = $true
+                $Config.codex.windowsSandbox = 'elevated'
                 return $true
             }
             '2' {
                 $Config.codex.sandboxMode = 'read-only'
                 $Config.codex.approvalPolicy = 'on-request'
-                $Config.codex.windowsSandbox = 'unelevated'
-                $Config.codex.webSearch = 'live'
+                $Config.codex.windowsSandbox = 'elevated'
                 return $true
             }
             '3' {
-                Write-SetupStatus -Kind Warning -Message '完全访问不受当前项目边界限制，可能修改其他文件。'
-                if (Confirm-SetupChoice -Prompt '确认只在完全可信的个人项目中使用完全访问吗？' -DefaultYes:$false) {
+                if (Confirm-SetupChoice -Prompt '确认仅用于完全可信项目？' -DefaultYes:$false) {
                     $Config.codex.sandboxMode = 'danger-full-access'
                     $Config.codex.approvalPolicy = 'on-request'
-                    $Config.codex.windowsSandbox = 'unelevated'
-                    $Config.codex.webSearch = 'live'
+                    $Config.codex.windowsSandbox = 'elevated'
                     return $true
                 }
             }
             'B' { return $false }
-            default { Write-SetupStatus -Kind Warning -Message "无效选项：$choice" }
+            default { Write-SetupStatus -Kind Warning -Message '无效选择。' }
         }
     }
 }
 
 function Invoke-WslSetup {
-    param(
-        [Parameter(Mandatory)]$Action,
-        [Parameter(Mandatory)]$Config
-    )
-    $helper = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\wsl\setup.sh'))
-    $helperWsl = Convert-WindowsPathToWsl $helper
-    $codexHomeWsl = Convert-WindowsPathToWsl (Join-Path $env:USERPROFILE '.codex')
+    param([Parameter(Mandatory)]$Action, [Parameter(Mandatory)]$Config, [switch]$NonInteractive)
     $distro = [string]$Action.parameters.distro
+    $helper = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\wsl\setup.sh'))
+    $agentsTemplate = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\templates\global\AGENTS.wsl.md.template'))
+    $verifyScript = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\wsl\verify.sh'))
+    $helperWsl = Convert-WindowsPathToWsl -Path $helper -ExpectedDistro $distro
+    $agentsTemplateWsl = Convert-WindowsPathToWsl -Path $agentsTemplate -ExpectedDistro $distro
+    $verifyScriptWsl = Convert-WindowsPathToWsl -Path $verifyScript -ExpectedDistro $distro
     $codeRoot = Resolve-WslUserPath -Distro $distro -Path ([string]$Config.paths.wslProjects)
-    $arguments = @('-d', $distro, '--', 'bash', $helperWsl, '--apply', '--code-root', $codeRoot)
-    $wslPackageConfiguration = Get-WslPackageConfiguration -Config $Config
-    foreach ($packageName in @($wslPackageConfiguration.packageNames)) {
-        $arguments += @('--apt-package', [string]$packageName)
-    }
-    foreach ($alias in @($wslPackageConfiguration.aliases)) {
-        $arguments += @('--command-alias', "$($alias.name)=$($alias.target)")
-    }
-    if ($Action.parameters.shareCodexHome) { $arguments += @('--share-codex-home', $codexHomeWsl) }
-    $installNode = if ($Action.parameters.PSObject.Properties.Name -contains 'installNode') {
-        [bool]$Action.parameters.installNode
-    }
-    else { $Config.toolchains.node.manager -eq 'fnm' }
-    $installPython = if ($Action.parameters.PSObject.Properties.Name -contains 'installPython') {
-        [bool]$Action.parameters.installPython
-    }
-    else { $Config.toolchains.python.manager -eq 'uv' }
-    if ($installNode) { $arguments += '--install-node' }
-    if ($installPython) { $arguments += '--install-python' }
+    $parameters = @(
+        '--code-root', $codeRoot
+        '--expected-distro', $distro
+        '--global-agents-template', $agentsTemplateWsl
+        '--verify-script', $verifyScriptWsl
+        '--approval-policy', [string]$Config.codex.approvalPolicy
+        '--sandbox-mode', [string]$Config.codex.sandboxMode
+        '--network-access', $Config.codex.networkAccess.ToString().ToLowerInvariant()
+        '--web-search', [string]$Config.codex.webSearch
+        '--check-for-update', $Config.codex.checkForUpdateOnStartup.ToString().ToLowerInvariant()
+    )
+    $packageConfig = Get-WslPackageConfiguration -Config $Config
+    foreach ($package in $packageConfig.packageNames) { $parameters += @('--apt-package', [string]$package) }
+    foreach ($alias in $packageConfig.aliases) { $parameters += @('--command-alias', "$($alias.name)=$($alias.target)") }
+    if ([bool]$Config.toolchains.node.enabled) { $parameters += '--install-node' }
+    if ([bool]$Config.toolchains.python.enabled) { $parameters += '--install-python' }
+    if ([bool]$Config.wsl.installPnpm) { $parameters += '--install-pnpm' }
+    if ([bool]$Config.wsl.installCodexCli) { $parameters += '--install-codex' }
+    if ([bool]$Config.wsl.configureGit) { $parameters += '--configure-git' }
+    if ([bool]$Config.toolchains.docker.enabled) { $parameters += '--verify-docker' }
+
+    $prefix = @('-d', $distro, '--', 'bash', $helperWsl)
+    Invoke-ExternalSetupCommand -Command 'wsl.exe' -Arguments ($prefix + '--what-if' + $parameters) -Quiet | Out-Null
     Write-Host ''
-    Write-Host '  WSL/Linux 设置将在当前窗口中继续。' -ForegroundColor Cyan
-    Write-Host '  如果要求输入密码，请输入 Ubuntu 用户密码后按 Enter。' -ForegroundColor DarkGray
-    Write-Host '  输入密码时屏幕不会显示字符；验证通过后会继续显示安装进度。' -ForegroundColor DarkGray
-    Write-Host ''
-    # Start the child with inherited console handles. Piping wsl.exe through
-    # PowerShell (especially into Out-Null) hides stdout after sudo succeeds and
-    # makes a healthy apt run look frozen to the user.
-    Invoke-InteractiveExternalSetupCommand -Command 'wsl.exe' -Arguments $arguments | Out-Null
-    Add-RollbackNote 'WSL 内已配置的 APT 软件包及 fnm/uv 安装不会由 Windows 回滚自动卸载；.bashrc 变更可用 wsl/setup.sh --rollback 删除。'
-    $ghProbeScript = 'gh_path="$(command -v gh 2>/dev/null || true)"; case "$gh_path" in ""|/mnt/[a-zA-Z]/*) exit 0;; esac; version="$(gh --version 2>/dev/null | head -n 1)"; printf "ghVersion=%s\n" "$version"; if gh auth status >/dev/null 2>&1; then printf "ghAuth=authenticated\n"; else printf "ghAuth=unauthenticated\n"; fi'
-    $ghProbeOutput = @(& wsl.exe -d $distro -- bash -lc $ghProbeScript 2>&1 | ForEach-Object { [string]$_ })
-    $ghVersion = @($ghProbeOutput | Where-Object { $_ -match '^ghVersion=(.*)$' } | ForEach-Object { $_ -replace '^ghVersion=', '' } | Select-Object -First 1)
-    $ghAuth = @($ghProbeOutput | Where-Object { $_ -match '^ghAuth=(.*)$' } | ForEach-Object { $_ -replace '^ghAuth=', '' } | Select-Object -First 1)
-    if ($ghVersion.Count -gt 0) {
-        $authText = if ($ghAuth.Count -gt 0 -and $ghAuth[0] -eq 'authenticated') { '已登录' } else { '未登录；需要时运行 gh auth login' }
-        return [pscustomobject]@{ summary="Linux $($ghVersion[0])；GitHub $authText"; githubVersion=$ghVersion[0]; githubAuthStatus=$(if ($ghAuth.Count -gt 0) { $ghAuth[0] } else { 'unknown' }) }
+    Write-Host "  正在 $distro 内配置 Linux 工具链。" -ForegroundColor Cyan
+    if ($NonInteractive) {
+        Invoke-ExternalSetupCommand -Command 'wsl.exe' -Arguments ($prefix + '--apply' + '--non-interactive' + $parameters) -Quiet | Out-Null
     }
+    else {
+        Write-Host '  仅在缺少系统包时，Ubuntu 会直接提示输入 sudo 密码；密码不会写入文件。' -ForegroundColor DarkGray
+        Invoke-InteractiveExternalSetupCommand -Command 'wsl.exe' -Arguments ($prefix + '--apply' + $parameters) | Out-Null
+    }
+    Add-RollbackNote 'WSL 内的软件包和用户配置不由 Windows 回滚自动删除。'
+    New-ActionOutcome -Status Changed -Summary "$distro 工具链已配置并通过环境检查" -Data $null
+}
+
+function Add-DeclaredProjectCommand {
+    param(
+        [Parameter(Mandatory)][System.Collections.Specialized.OrderedDictionary]$Commands,
+        [Parameter(Mandatory)][string]$Label,
+        [Parameter(Mandatory)][string]$Command
+    )
+    if (-not $Commands.Contains($Label)) { $Commands.Add($Label, $Command) }
+}
+
+function Get-DeclaredProjectCommands {
+    param(
+        [Parameter(Mandatory)][string]$ProjectPath,
+        [Parameter(Mandatory)][ValidateSet('WslFirst', 'WindowsNative')][string]$EnvironmentMode
+    )
+    $commands = [ordered]@{}
+    $scriptExtension = if ($EnvironmentMode -eq 'WslFirst') { 'sh' } else { 'ps1' }
+    foreach ($name in @('setup', 'dev', 'check', 'test', 'lint', 'format', 'typecheck', 'build')) {
+        $scriptPath = Join-Path $ProjectPath "scripts\$name.$scriptExtension"
+        if (Test-Path -LiteralPath $scriptPath -PathType Leaf) {
+            $scriptCommand = if ($EnvironmentMode -eq 'WslFirst') { "./scripts/$name.sh" } else { ".\scripts\$name.ps1" }
+            Add-DeclaredProjectCommand -Commands $commands -Label ((Get-Culture).TextInfo.ToTitleCase($name)) -Command $scriptCommand
+        }
+    }
+
+    $packageJsonPath = Join-Path $ProjectPath 'package.json'
+    if (Test-Path -LiteralPath $packageJsonPath -PathType Leaf) {
+        try { $packageJson = Get-Content -LiteralPath $packageJsonPath -Raw -Encoding utf8 | ConvertFrom-Json -ErrorAction Stop }
+        catch { throw "package.json 无法解析：$($_.Exception.Message)" }
+        $declaredPackageManager = [string](Get-ActionProperty $packageJson 'packageManager' '')
+        $declaredManager = $null
+        if ($declaredPackageManager) {
+            if ($declaredPackageManager -notmatch '^(pnpm|npm)@[^\s]+$') {
+                throw "package.json.packageManager 不受当前环境支持：$declaredPackageManager"
+            }
+            $declaredManager = $matches[1]
+        }
+        $lockManagers = @(@(
+            if (Test-Path -LiteralPath (Join-Path $ProjectPath 'pnpm-lock.yaml') -PathType Leaf) { 'pnpm' }
+            if (Test-Path -LiteralPath (Join-Path $ProjectPath 'package-lock.json') -PathType Leaf) { 'npm' }
+            if (Test-Path -LiteralPath (Join-Path $ProjectPath 'npm-shrinkwrap.json') -PathType Leaf) { 'npm' }
+            if (Test-Path -LiteralPath (Join-Path $ProjectPath 'yarn.lock') -PathType Leaf) { 'yarn' }
+            if (Test-Path -LiteralPath (Join-Path $ProjectPath 'bun.lock') -PathType Leaf) { 'bun' }
+            if (Test-Path -LiteralPath (Join-Path $ProjectPath 'bun.lockb') -PathType Leaf) { 'bun' }
+        ) | Select-Object -Unique)
+        if ($lockManagers.Count -gt 1) { throw "检测到冲突的 Node 锁文件：$($lockManagers -join '、')。" }
+        $lockManager = @($lockManagers | Select-Object -First 1)
+        if ($lockManager.Count -eq 1 -and $lockManager[0] -notin @('pnpm', 'npm')) {
+            throw "当前环境不支持 $($lockManager[0]) 锁文件；请先统一项目包管理器。"
+        }
+        if ($declaredManager -and $lockManager.Count -eq 1 -and $declaredManager -ne $lockManager[0]) {
+            throw "packageManager=$declaredManager 与 $($lockManager[0]) 锁文件冲突。"
+        }
+        $manager = if ($declaredManager) { $declaredManager } elseif ($lockManager.Count -eq 1) { $lockManager[0] } else { $null }
+        if ($manager -eq 'pnpm') {
+            $setup = if (Test-Path -LiteralPath (Join-Path $ProjectPath 'pnpm-lock.yaml') -PathType Leaf) { 'pnpm install --frozen-lockfile' } else { 'pnpm install' }
+            Add-DeclaredProjectCommand -Commands $commands -Label 'Setup' -Command $setup
+        }
+        elseif ($manager -eq 'npm' -and (Test-Path -LiteralPath (Join-Path $ProjectPath 'package-lock.json') -PathType Leaf)) {
+            Add-DeclaredProjectCommand -Commands $commands -Label 'Setup' -Command 'npm ci'
+        }
+        $scripts = Get-ActionProperty $packageJson 'scripts'
+        if ($manager -and $null -ne $scripts) {
+            foreach ($name in @('dev', 'test', 'lint', 'check', 'format', 'typecheck', 'build')) {
+                if ($scripts.PSObject.Properties.Name -contains $name) {
+                    Add-DeclaredProjectCommand -Commands $commands -Label ((Get-Culture).TextInfo.ToTitleCase($name)) -Command "$manager run $name"
+                }
+            }
+        }
+    }
+
+    $pyprojectPath = Join-Path $ProjectPath 'pyproject.toml'
+    if (Test-Path -LiteralPath $pyprojectPath -PathType Leaf) {
+        $pyprojectLines = @(Get-Content -LiteralPath $pyprojectPath -Encoding utf8)
+        $usesUv = (Test-Path -LiteralPath (Join-Path $ProjectPath 'uv.lock') -PathType Leaf) -or
+            @($pyprojectLines | Where-Object { $_ -match '^\s*\[tool\.uv(?:\.|\])' }).Count -gt 0
+        if ($usesUv) {
+            $sync = if (Test-Path -LiteralPath (Join-Path $ProjectPath 'uv.lock') -PathType Leaf) { 'uv sync --frozen' } else { 'uv sync' }
+            Add-DeclaredProjectCommand -Commands $commands -Label 'Setup' -Command $sync
+            if ((Test-Path -LiteralPath (Join-Path $ProjectPath 'tests') -PathType Container) -and
+                @($pyprojectLines | Where-Object { $_ -match '^\s*\[tool\.pytest(?:\.|\])' }).Count -gt 0) {
+                Add-DeclaredProjectCommand -Commands $commands -Label 'Test' -Command 'uv run pytest'
+            }
+            if (@($pyprojectLines | Where-Object { $_ -match '^\s*\[tool\.ruff(?:\.|\])' }).Count -gt 0) {
+                Add-DeclaredProjectCommand -Commands $commands -Label 'Lint' -Command 'uv run ruff check .'
+                Add-DeclaredProjectCommand -Commands $commands -Label 'Format' -Command 'uv run ruff format .'
+            }
+        }
+    }
+    return $commands
 }
 
 function New-ProjectTemplateMap {
     param(
         [Parameter(Mandatory)][string]$ProjectPath,
-        [Parameter(Mandatory)]$Config,
-        [string]$RecommendedAgent = 'WSL'
+        [Parameter(Mandatory)]$Config
     )
-    $agentLabel = if ($RecommendedAgent -eq 'WindowsNative') { 'Windows native / PowerShell 7' } else { 'WSL2 / Bash' }
+    $fullProjectPath = [System.IO.Path]::GetFullPath($ProjectPath)
+    $pathCompatible = if ($Config.environmentMode -eq 'WslFirst') {
+        $escapedDistribution = [regex]::Escape([string]$Config.wsl.distribution)
+        $fullProjectPath -match "(?i)^\\\\wsl(?:\$|\.localhost)\\$escapedDistribution\\home\\[^\\]+\\code(?:\\|$)"
+    }
+    else { $fullProjectPath -match '^[A-Za-z]:\\' -and $fullProjectPath -notmatch '^\\\\wsl(?:\$|\.localhost)\\' }
+    if (-not $pathCompatible) {
+        $expected = if ($Config.environmentMode -eq 'WslFirst') { '目标 Ubuntu 的 \\wsl$\...\home\<user>\code 路径' } else { 'Windows 本地磁盘路径' }
+        throw "项目位置不符合当前开发环境；请选择$expected。当前路径：$fullProjectPath"
+    }
     $templateRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\templates\project'))
+    $environmentRules = if ($Config.environmentMode -eq 'WslFirst') {
+        @(
+            '- Use WSL2 Ubuntu and run commands directly in Bash.'
+            '- Use Linux paths and tools. Keep the repository under `~/code`; never develop under `/mnt`.'
+            '- Do not use PowerShell, Command Prompt, Git Bash, `wsl.exe`, or Windows executables for repository work.'
+        ) -join "`n"
+    }
+    else {
+        @(
+            '- Use Windows native PowerShell 7 and Windows-native tools.'
+            '- Use Windows paths. Do not access this repository through WSL or Git Bash.'
+        ) -join "`n"
+    }
+    $commands = Get-DeclaredProjectCommands -ProjectPath $fullProjectPath -EnvironmentMode $Config.environmentMode
+    $commandLines = if ($commands.Count -gt 0) {
+        @($commands.GetEnumerator() | ForEach-Object { "- $($_.Key): ``$($_.Value)``" }) -join "`n"
+    }
+    else { '- No setup, run, test, lint, format, or build command is declared. Do not invent one.' }
     $agents = Get-Content -LiteralPath (Join-Path $templateRoot 'AGENTS.md.template') -Raw -Encoding utf8
-    $agents = $agents.Replace('{{AGENT_LABEL}}', $agentLabel)
-    $networkBlock = if ($Config.codex.sandboxMode -eq 'workspace-write') {
-        "`n[sandbox_workspace_write]`nnetwork_access = $($Config.codex.networkAccess.ToString().ToLowerInvariant())"
-    } else { '' }
-    $projectToml = Get-Content -LiteralPath (Join-Path $templateRoot 'config.toml.template') -Raw -Encoding utf8
-    $projectToml = $projectToml.Replace('{{APPROVAL_POLICY}}', $Config.codex.approvalPolicy)
-    $projectToml = $projectToml.Replace('{{SANDBOX_MODE}}', $Config.codex.sandboxMode)
-    $projectToml = $projectToml.Replace('{{WEB_SEARCH}}', $Config.codex.webSearch)
-    $projectToml = $projectToml.Replace('{{WORKSPACE_NETWORK_BLOCK}}', $networkBlock)
-    $editorConfig = Get-Content -LiteralPath (Join-Path $templateRoot 'editorconfig.template') -Raw -Encoding utf8
-    $gitattributes = Get-Content -LiteralPath (Join-Path $templateRoot 'gitattributes.template') -Raw -Encoding utf8
-    $gitignore = Get-Content -LiteralPath (Join-Path $templateRoot 'gitignore.template') -Raw -Encoding utf8
-    return [ordered]@{
-        (Join-Path $ProjectPath 'AGENTS.md') = $agents
-        (Join-Path $ProjectPath '.codex\config.toml') = $projectToml
-        (Join-Path $ProjectPath '.editorconfig') = $editorConfig
-        (Join-Path $ProjectPath '.gitattributes') = $gitattributes
-        (Join-Path $ProjectPath '.gitignore') = $gitignore
+    $agents = $agents.Replace('{{ENVIRONMENT_RULES}}', $environmentRules).Replace('{{PROJECT_COMMANDS}}', $commandLines)
+    [ordered]@{
+        (Join-Path $fullProjectPath 'AGENTS.md') = $agents
+        (Join-Path $fullProjectPath '.editorconfig') = (Get-Content -LiteralPath (Join-Path $templateRoot 'editorconfig.template') -Raw -Encoding utf8)
+        (Join-Path $fullProjectPath '.gitattributes') = (Get-Content -LiteralPath (Join-Path $templateRoot 'gitattributes.template') -Raw -Encoding utf8)
+        (Join-Path $fullProjectPath '.gitignore') = (Get-Content -LiteralPath (Join-Path $templateRoot 'gitignore.template') -Raw -Encoding utf8)
     }
 }
 
 function Set-ProjectTemplates {
-    param(
-        [Parameter(Mandatory)]$Action,
-        [Parameter(Mandatory)]$Config,
-        [switch]$NonInteractive
-    )
-    $projectPath = [System.IO.Path]::GetFullPath($Action.parameters.projectPath)
-    [System.IO.Directory]::CreateDirectory($projectPath) | Out-Null
-    $templates = New-ProjectTemplateMap -ProjectPath $projectPath -Config $Config -RecommendedAgent $Action.parameters.agent
+    param([Parameter(Mandatory)]$Action, [Parameter(Mandatory)]$Config, [switch]$NonInteractive)
+    $projectPath = [System.IO.Path]::GetFullPath([string]$Action.parameters.projectPath)
+    if (-not (Test-Path -LiteralPath $projectPath -PathType Container)) { throw "项目目录不存在：$projectPath" }
+    $templates = New-ProjectTemplateMap -ProjectPath $projectPath -Config $Config
+    $skippedFiles = [System.Collections.Generic.List[string]]::new()
+    $changedFiles = [System.Collections.Generic.List[string]]::new()
+    $unchangedFiles = [System.Collections.Generic.List[string]]::new()
     foreach ($entry in $templates.GetEnumerator()) {
-        $path = $entry.Key
+        $path = [string]$entry.Key
         if (Test-Path -LiteralPath $path -PathType Leaf) {
             $current = Get-Content -LiteralPath $path -Raw -Encoding utf8
             $desired = $entry.Value.TrimEnd("`r", "`n") + [Environment]::NewLine
-            if ($current -eq $desired) { continue }
-            $replace = Confirm-SetupChoice -Prompt "文件已存在，是否备份并替换？$path" -DefaultYes:$false -NonInteractive:$NonInteractive
-            if (-not $replace) {
-                $candidate = "$path.codex-setup.candidate"
-                Set-SetupFileContent -Path $candidate -Content $entry.Value -Description '写入项目模板候选文件' | Out-Null
+            if ($current -eq $desired) { $unchangedFiles.Add($path); continue }
+            if (-not (Confirm-SetupChoice -Prompt "文件已存在，是否备份并替换？$path" -DefaultYes:$false -NonInteractive:$NonInteractive)) {
+                $skippedFiles.Add($path)
                 continue
             }
         }
-        Set-SetupFileContent -Path $path -Content $entry.Value -Description '写入项目标准模板' | Out-Null
+        if (Set-SetupFileContent -Path $path -Content $entry.Value -Description '写入项目模板' -ManagedKind ProjectTemplate -ManagedRoot $projectPath) { $changedFiles.Add($path) }
     }
-}
-
-function Show-AuthenticationGuidance {
-    Write-Host ''
-    Write-Host '    推荐方式：通过 GitHub CLI 在浏览器登录' -ForegroundColor Cyan
-    Write-Host '      1. 在新终端运行：'
-    Write-Host '         gh auth login' -ForegroundColor DarkCyan
-    Write-Host '      2. 按终端提示打开浏览器并完成授权。'
-    Write-Host '      3. 返回终端检查登录状态：'
-    Write-Host '         gh auth status' -ForegroundColor DarkCyan
-    Write-Host ''
-    Write-Host '    如果项目明确要求使用 SSH（可选）' -ForegroundColor Cyan
-    Write-Host '      · 查看已有公钥：Get-Content $HOME\.ssh\id_ed25519.pub'
-    Write-Host '      · 没有公钥时新建：ssh-keygen -t ed25519 -C "你的公开邮箱或标签"'
-    Write-Host '      · 将公钥添加到 GitHub 后测试：ssh -T git@github.com'
-    Write-Host ''
-    Write-Host '    登录可稍后完成；本工具不会读取令牌、密码或 SSH 私钥。' -ForegroundColor DarkGray
-    Add-RollbackNote 'GitHub CLI/SSH 登录由用户在官方交互流程中完成；认证状态不纳入回滚。'
+    $status = if ($skippedFiles.Count -gt 0) { 'NeedsAttention' } elseif ($changedFiles.Count -gt 0) { 'Changed' } else { 'NoChange' }
+    $summary = "项目文件：更新 $($changedFiles.Count) 个，无需修改 $($unchangedFiles.Count) 个，保留 $($skippedFiles.Count) 个"
+    New-ActionOutcome -Status $status -Summary $summary -Data @{
+        changedFiles=@($changedFiles); unchangedFiles=@($unchangedFiles); preservedFiles=@($skippedFiles)
+    }
 }
 
 function Invoke-SetupAction {
     [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)]$Action,
-        [Parameter(Mandatory)]$Config,
-        [switch]$NonInteractive
-    )
+    param([Parameter(Mandatory)]$Action, [Parameter(Mandatory)]$Config, [switch]$NonInteractive)
     switch ($Action.type) {
-        'WingetInstall'       { Install-WingetPackage -Action $Action }
-        'WingetUpgradeCheck'  { Test-WingetPackageUpgrade -Action $Action }
-        'NodeConfigure'       { Set-NodeLts }
-        'PythonConfigure'     { Set-PythonWithUv }
-        'WslInstall'          { Invoke-ExternalSetupCommand 'wsl.exe' @('--install', '--distribution', 'Ubuntu') | Out-Null; Add-RollbackNote 'WSL 安装可能需要重启；脚本不会自动注销发行版。' }
-        'WslInstallDistro'    { Invoke-ExternalSetupCommand 'wsl.exe' @('--install', '--distribution', 'Ubuntu') | Out-Null; Add-RollbackNote 'Ubuntu 安装不会由自动回滚注销，以避免数据丢失。' }
-        'WslConvert2'         { Invoke-ExternalSetupCommand 'wsl.exe' @('--set-version', $Action.parameters.distro, '2') | Out-Null; Add-RollbackNote 'WSL2 转换不会自动降级回 WSL1。' }
-        'WslConfigure'        { Invoke-WslSetup -Action $Action -Config $Config }
-        'WslNetworkConfigure' { Invoke-WslNetworkSetup -Action $Action -Config $Config }
-        'GitConfig'           { Set-GitBaseline }
-        'AuthGuidance'        { Show-AuthenticationGuidance }
-        'TerminalFragment'    { Set-TerminalFragment -Distro $Action.parameters.distro -WindowsProjects $Action.parameters.windowsProjects }
-        'PowerShellProfile'   { Set-PowerShellDeveloperProfile -WindowsProjects $Action.parameters.windowsProjects }
-        'CodexGlobalConfig'   { Set-CodexGlobalConfig -Config $Config }
-        'ProjectTemplates'    { Set-ProjectTemplates -Action $Action -Config $Config -NonInteractive:$NonInteractive }
-        default               { throw "未知操作类型：$($Action.type)" }
-    }
-}
-
-function Show-WslPasswordRecoveryGuidance {
-    param([Parameter(Mandatory)]$Action)
-
-    $distro = [string]$Action.parameters.distro
-    if ([string]::IsNullOrWhiteSpace($distro)) { $distro = 'Ubuntu' }
-    Write-Host ''
-    Write-Host '如果忘记了 Ubuntu/WSL 用户密码，可以稍后这样恢复：' -ForegroundColor Cyan
-    Write-Host "  1. 另开一个 PowerShell 窗口，运行：wsl.exe -d $distro -u root"
-    Write-Host '  2. 在打开的 Linux 终端中运行：passwd <你的 Ubuntu 用户名>'
-    Write-Host '  3. 设置新密码后运行 exit，再回到本工具重试。'
-    Write-Host '提示：这只修改该 Ubuntu 发行版的 Linux 用户密码，不会修改 Windows 密码。' -ForegroundColor DarkGray
-}
-
-function Read-WslFailureChoice {
-    while ($true) {
-        Write-Host '[R] 重试  [S/Enter] 暂时跳过  [H] 查看密码恢复方法  [Q] 结束设置' -ForegroundColor Yellow
-        $answer = (Read-Host '请选择').Trim().ToUpperInvariant()
-        switch ($answer) {
-            'R' { return 'Retry' }
-            'H' { return 'Help' }
-            'Q' { return 'Quit' }
-            ''  { return 'Skip' }
-            'S' { return 'Skip' }
-            default { Write-SetupStatus -Kind Warning -Message "无效选项：$answer" }
-        }
+        'WingetInstall'          { Install-WingetPackage -Action $Action }
+        'WingetUpgradeCheck'     { Test-WingetPackageUpgrade -Action $Action }
+        'PythonConfigure'        { Set-PythonWithUv }
+        'WslUpdate'              { Update-WslRuntime }
+        'WslSetDefaultVersion2'  { Set-WslDefaultVersion2 }
+        'WslInstallDistribution' { Invoke-ExternalSetupCommand -Command 'wsl.exe' -Arguments @('--install', '--distribution', [string]$Action.parameters.distro) | Out-Null; Add-RollbackNote '不会自动注销新发行版，以免删除 Linux 数据。'; New-ActionOutcome -Status RestartRequired -Summary '发行版安装已启动；请按 Windows 提示重启后再继续' -Data $null }
+        'WslSetDefaultDistribution' { Invoke-ExternalSetupCommand -Command 'wsl.exe' -Arguments @('--set-default', [string]$Action.parameters.distro) | Out-Null; New-ActionOutcome -Status Changed -Summary '默认 WSL 发行版已设置' -Data $null }
+        'WslConfigure'           { Invoke-WslSetup -Action $Action -Config $Config -NonInteractive:$NonInteractive }
+        'WslNetworkConfigure'    { Set-WslNetworkingConfig -Config $Config }
+        'WindowsGitConfig'       { Set-WindowsGitBaseline }
+        'CodexGlobalConfig'      { Set-CodexGlobalConfig -Config $Config }
+        'GlobalAgents'           { Set-GlobalAgents -Action $Action }
+        'ProjectTemplates'       { Set-ProjectTemplates -Action $Action -Config $Config -NonInteractive:$NonInteractive }
+        default                  { throw "未知操作类型：$($Action.type)" }
     }
 }
 
@@ -893,205 +684,84 @@ function Invoke-CodexSetupPlan {
         [switch]$ConfirmModules
     )
     $results = @()
-    $failedOrBlockedIds = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-    $applyRemainingOrdinary = $false
-    $stopRequested = $false
-    $modules = @(Get-SetupOrderedModules -Actions $Plan.actions)
-    for ($moduleIndex = 0; $moduleIndex -lt $modules.Count; $moduleIndex++) {
-        $module = $modules[$moduleIndex]
-        $groupActions = @($Plan.actions | Where-Object module -eq $module)
-        if ($stopRequested) {
-            foreach ($action in $groupActions) {
-                [void]$failedOrBlockedIds.Add([string]$action.id)
-                $results += [pscustomobject]@{ id=$action.id; module=$module; status='Skipped'; error='用户已结束后续设置。'; durationMs=0 }
-            }
-            continue
-        }
-        $moduleDisplayName = Get-SetupModuleDisplayName -Module $module
-        if (-not $WhatIfPreference) {
-            Write-SetupSectionHeader -Title ("工作步骤 {0}/{1} · {2}（{3} 项）" -f ($moduleIndex + 1), $modules.Count, $moduleDisplayName, $groupActions.Count)
-        }
+    $blocked = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($module in @(Get-SetupOrderedModules -Actions $Plan.actions)) {
+        $group = @($Plan.actions | Where-Object module -eq $module)
         $runModule = $true
-        if ($ConfirmModules -and -not $WhatIfPreference) {
-            # -ApplyChanges is the explicit mutation gate. In non-interactive replay,
-            # module prompts cannot surface, so the exported policy is accepted as-is.
-            if ($NonInteractive) {
-                $runModule = $true
-            }
-            elseif ($applyRemainingOrdinary -and -not ($groupActions.critical -contains $true)) {
-                Write-SetupStatus -Kind Info -Message "按你的选择继续设置：$(Get-SetupModuleDisplayName -Module $module)"
-                $runModule = $true
+        if ($ConfirmModules -and -not $NonInteractive -and -not $WhatIfPreference) {
+            if ($module -eq 'CodexConfig') {
+                Write-Host '[Y] 应用  [C] 自定义  [S/Enter] 跳过' -ForegroundColor DarkGray
+                $choice = (Read-Host '请选择').Trim().ToUpperInvariant()
+                if ($choice -eq 'C') { $runModule = Select-CodexConfigurationPreset -Config $Config }
+                elseif ($choice -notin @('Y', 'YES', '是', '确认')) { $runModule = $false }
             }
             else {
-                $hasCriticalAction = $groupActions.critical -contains $true
-                if ($hasCriticalAction) {
-                    Write-SetupStatus -Kind Warning -Message "$moduleDisplayName 包含需要特别留意的设置，仍会单独确认。"
-                }
-                do {
-                    $continueLabel = if ($module -eq 'Updates') { '检查' } else { '设置' }
-                    if ($module -eq 'CodexConfig') {
-                        Write-Host '[Y] 使用推荐设置   [C] 选择工作方式   [S/Enter] 暂不处理   [Q] 结束' -ForegroundColor DarkGray
-                    }
-                    else {
-                        Write-Host "[Y] $continueLabel   [S/Enter] 暂不处理   [A] 后续普通项目自动继续   [Q] 结束" -ForegroundColor DarkGray
-                    }
-                    $rawChoice = Read-Host '请选择'
-                    $validPattern = if ($module -eq 'CodexConfig') {
-                        '^(?i:y|yes|是|确认|c|custom|自定义|s|skip|跳过|q|quit|退出)$'
-                    }
-                    else {
-                        '^(?i:y|yes|是|确认|s|skip|跳过|a|all|全部|q|quit|退出)$'
-                    }
-                    $validChoice = [string]::IsNullOrWhiteSpace($rawChoice) -or $rawChoice.Trim() -match $validPattern
-                    if (-not $validChoice) { Write-SetupStatus -Kind Warning -Message "无效选项：$rawChoice" }
-                } while (-not $validChoice)
-                $isCodexCustomChoice = $module -eq 'CodexConfig' -and $rawChoice.Trim() -match '^(?i:c|custom|自定义)$'
-                $moduleChoice = if ($isCodexCustomChoice) {
-                    [pscustomobject]@{ choice='CustomCodex'; applyRemainingOrdinary=$false; requiresSeparateConfirmation=$false }
-                }
-                else {
-                    Resolve-SetupModuleChoice -Answer $rawChoice -HasCriticalAction:$hasCriticalAction
-                }
-                if ($moduleChoice.applyRemainingOrdinary) { $applyRemainingOrdinary = $true }
-                switch ($moduleChoice.choice) {
-                    'Quit' {
-                        $stopRequested = $true
-                        $runModule = $false
-                    }
-                    'ApplyModule' {
-                        $runModule = $true
-                        if ($moduleChoice.requiresSeparateConfirmation) {
-                            $criticalPrompt = '确认继续设置“{0}”中的高风险项目吗？' -f $moduleDisplayName
-                            $runModule = Confirm-SetupChoice -Prompt $criticalPrompt -DefaultYes:$false
-                        }
-                    }
-                    'CustomCodex' {
-                        $runModule = Select-CodexConfigurationPreset -Config $Config
-                    }
-                    default { $runModule = $false }
-                }
+                $runModule = Confirm-SetupChoice -Prompt "执行模块：$(Get-SetupModuleDisplayName -Module $module)？" -DefaultYes:$false
             }
         }
-        if (-not $runModule) {
-            $skipReason = if ($stopRequested) { '用户已结束后续设置。' } else { $null }
-            foreach ($action in $groupActions) {
-                [void]$failedOrBlockedIds.Add([string]$action.id)
-                $results += [pscustomobject]@{ id=$action.id; module=$module; status='Skipped'; error=$skipReason; durationMs=0 }
-            }
-            continue
-        }
-        $updateOutcomes = @()
-        for ($actionIndex = 0; $actionIndex -lt $groupActions.Count; $actionIndex++) {
-            $action = $groupActions[$actionIndex]
-            $actionProgress = '{0}/{1}' -f ($actionIndex + 1), $groupActions.Count
-            $dependsOn = if ($action.PSObject.Properties.Name -contains 'dependsOn') { @($action.dependsOn) } else { @() }
-            $blockingDependencies = @($dependsOn | Where-Object { $failedOrBlockedIds.Contains([string]$_) })
-            if ($blockingDependencies.Count -gt 0) {
-                $dependencyMessage = "前置步骤未完成：$($blockingDependencies -join '、')"
-                Write-Host "  [$actionProgress 已跳过] $($action.title)：$dependencyMessage。" -ForegroundColor Yellow
-                [void]$failedOrBlockedIds.Add([string]$action.id)
-                $results += [pscustomobject]@{ id=$action.id; module=$module; status='Skipped'; error=$dependencyMessage; durationMs=0 }
+        foreach ($action in $group) {
+            $dependencies = @($action.dependsOn | Where-Object { $blocked.Contains([string]$_) })
+            if (-not $runModule -or $dependencies.Count -gt 0) {
+                [void]$blocked.Add([string]$action.id)
+                $dependencyTitles = @($Plan.actions | Where-Object { $_.id -in $dependencies } | ForEach-Object title)
+                $reason = if ($dependencies.Count -gt 0) { "前一步尚未完成：$($dependencyTitles -join '、')" } else { '这组操作未获确认。' }
+                $results += [pscustomobject]@{ id=$action.id; module=$module; status='Skipped'; error=$reason; detail=$null; durationMs=0 }
                 continue
             }
-            # PowerShell's built-in WhatIf message exposes implementation jargon for every
-            # action. The plan has already been shown in plain language, so record a clear
-            # preview result here instead of emitting a noisy line for each operation.
+            $isCritical = [bool]$action.critical -or
+                ($action.type -eq 'CodexGlobalConfig' -and $Config.codex.sandboxMode -eq 'danger-full-access')
+            if ($isCritical -and -not $NonInteractive -and -not $WhatIfPreference) {
+                Write-Host ''
+                Write-Host "高影响操作：$($action.title)" -ForegroundColor Yellow
+                Write-SetupWrappedText -Text $action.reason -FirstIndent '  影响：' -ContinuationIndent '        ' -ForegroundColor Yellow
+                Write-Host "  目标：$($action.target)" -ForegroundColor DarkGray
+                $criticalApproved = if ($action.type -eq 'CodexGlobalConfig' -and $Config.codex.sandboxMode -eq 'danger-full-access') {
+                    Write-Host '  这会修改用户级全局默认值，影响之后打开的所有 Codex 项目与任务。' -ForegroundColor Red
+                    (Read-Host '如要继续，请输入：启用全局高风险权限').Trim() -ceq '启用全局高风险权限'
+                }
+                else {
+                    Confirm-SetupChoice -Prompt '确认继续这项高影响操作？' -DefaultYes:$false
+                }
+                if (-not $criticalApproved) {
+                    [void]$blocked.Add([string]$action.id)
+                    $results += [pscustomobject]@{ id=$action.id; module=$module; status='Skipped'; error='用户未确认高影响操作。'; detail=$null; durationMs=0 }
+                    continue
+                }
+            }
             if ($WhatIfPreference) {
-                $results += [pscustomobject]@{ id=$action.id; module=$module; status='Preview'; error=$null; durationMs=0 }
+                $results += [pscustomobject]@{ id=$action.id; module=$module; status='Preview'; error=$null; detail=$null; durationMs=0 }
                 continue
             }
             if (-not $PSCmdlet.ShouldProcess($action.target, $action.title)) {
-                [void]$failedOrBlockedIds.Add([string]$action.id)
-                $results += [pscustomobject]@{ id=$action.id; module=$module; status='Skipped'; error=$null; durationMs=0 }
+                [void]$blocked.Add([string]$action.id)
+                $results += [pscustomobject]@{ id=$action.id; module=$module; status='Skipped'; error=$null; detail=$null; durationMs=0 }
                 continue
             }
-            $actionTimer = [Diagnostics.Stopwatch]::StartNew()
-            $actionStatus = 'Failed'
-            $actionError = $null
-            $actionOutcome = $null
-            :actionAttempt while ($true) {
-                try {
-                    $progressLabel = switch ($action.type) {
-                        'AuthGuidance' { '登录说明' }
-                        'WingetUpgradeCheck' { '检查中' }
-                        default { '进行中' }
-                    }
-                    Write-Host "  [$actionProgress $progressLabel] $($action.title)" -ForegroundColor Cyan
-                    Write-SetupLog -Message '开始设置项目' -Data @{ id=$action.id; module=$module; title=$action.title }
-                    $actionOutcome = Invoke-SetupAction -Action $action -Config $Config -NonInteractive:$NonInteractive
-                    $actionStatus = 'Completed'
-                    $actionError = $null
-                    break actionAttempt
+            $timer = [Diagnostics.Stopwatch]::StartNew()
+            try {
+                Write-Host "  [进行中] $($action.title)" -ForegroundColor Cyan
+                $detail = Invoke-SetupAction -Action $action -Config $Config -NonInteractive:$NonInteractive
+                $timer.Stop()
+                $outcomeStatus = [string](Get-ActionProperty $detail 'status' 'Changed')
+                if ($outcomeStatus -notin @('Changed', 'NoChange', 'NeedsAttention', 'RestartRequired')) {
+                    throw "操作返回了无效状态：$outcomeStatus"
                 }
-                catch {
-                    $message = ConvertTo-RedactedText $_.Exception.Message
-                    $isWslPasswordFailure = $action.type -eq 'WslConfigure' -and $message -match '(?:exit=77|CODEX_SETUP_SUDO_AUTH_FAILED)'
-                    $isWslSudoUnavailable = $action.type -eq 'WslConfigure' -and $message -match '(?:exit=78|CODEX_SETUP_SUDO_UNAVAILABLE)'
-                    $isWslShellMarkerFailure = $action.type -eq 'WslConfigure' -and $message -match '(?:exit=79|CODEX_SETUP_SHELL_MARKERS_INVALID)'
-                    if ($isWslPasswordFailure) {
-                        $actionError = 'Ubuntu/WSL 用户密码验证失败；尚未安装缺少的 Linux 系统工具。'
-                        Write-SetupStatus -Kind Error -Message $actionError
-                        if (-not $NonInteractive) {
-                            do {
-                                $failureChoice = Read-WslFailureChoice
-                                if ($failureChoice -eq 'Help') { Show-WslPasswordRecoveryGuidance -Action $action }
-                            } while ($failureChoice -eq 'Help')
-                            if ($failureChoice -eq 'Retry') { continue actionAttempt }
-                            if ($failureChoice -eq 'Quit') { $stopRequested = $true }
-                        }
-                    }
-                    elseif ($isWslSudoUnavailable) {
-                        $actionError = 'Ubuntu 中没有可用的 sudo，无法自动安装缺少的 Linux 系统工具。'
-                        Write-SetupStatus -Kind Error -Message $actionError
-                    }
-                    elseif ($isWslShellMarkerFailure) {
-                        $actionError = 'Ubuntu 的 .bashrc 中存在不完整或重复的 Codex 管理区块；为保护原有终端设置，本次没有修改该文件或继续安装。'
-                        Write-SetupStatus -Kind Error -Message $actionError
-                        Write-Host '  请检查并修复成对的 CodexDevSetup:WSL 开始/结束标记，然后重新运行。' -ForegroundColor DarkGray
-                    }
-                    else {
-                        $actionError = $message
-                        Write-SetupStatus -Kind Error -Message "$($action.title) 失败：$message"
-                    }
-                    break actionAttempt
+                $outcomeSummary = [string](Get-ActionProperty $detail 'summary' $action.title)
+                switch ($outcomeStatus) {
+                    'Changed' { Write-Host "  [已更新] $outcomeSummary" -ForegroundColor Green }
+                    'NoChange' { Write-Host "  [无需修改] $outcomeSummary" -ForegroundColor DarkGreen }
+                    'NeedsAttention' { Write-Host "  [需要处理] $outcomeSummary" -ForegroundColor Yellow; [void]$blocked.Add([string]$action.id) }
+                    'RestartRequired' { Write-Host "  [需要重启] $outcomeSummary" -ForegroundColor Yellow; [void]$blocked.Add([string]$action.id) }
                 }
+                $results += [pscustomobject]@{ id=$action.id; module=$module; status=$outcomeStatus; error=$null; detail=$detail; durationMs=[math]::Round($timer.Elapsed.TotalMilliseconds) }
             }
-            $actionTimer.Stop()
-            if ($actionStatus -eq 'Completed') {
-                if ($action.type -eq 'WingetUpgradeCheck') {
-                    $softwareName = ([string]$action.title -replace '^检查\s*', '') -replace '\s*更新$', ''
-                    $summaryText = if ($null -ne $actionOutcome -and $actionOutcome.PSObject.Properties.Name -contains 'summary') {
-                        [string]$actionOutcome.summary
-                    }
-                    else { '检查完成；未执行升级' }
-                    $resultColor = if ($null -ne $actionOutcome -and $actionOutcome.updateStatus -eq 'Available') { 'Yellow' } elseif ($null -ne $actionOutcome -and $actionOutcome.updateStatus -eq 'Unknown') { 'DarkYellow' } else { 'Green' }
-                    Write-Host (('  [{0} 结果] {1}：{2}（{3:N1}s）' -f $actionProgress, $softwareName, $summaryText, $actionTimer.Elapsed.TotalSeconds)) -ForegroundColor $resultColor
-                    if ($null -ne $actionOutcome) { $updateOutcomes += $actionOutcome }
-                }
-                elseif ($action.type -ne 'AuthGuidance') {
-                    $completionSummary = if ($null -ne $actionOutcome -and $actionOutcome.PSObject.Properties.Name -contains 'summary') {
-                        [string]$actionOutcome.summary
-                    }
-                    else { $null }
-                    $completionPrefix = if ($completionSummary) { "$completionSummary；" } else { '' }
-                    Write-Host (('  [{0} 完成] {1}（{2}{3:N1}s）' -f $actionProgress, $action.title, $completionPrefix, $actionTimer.Elapsed.TotalSeconds)) -ForegroundColor Green
-                }
-                Write-SetupLog -Message '设置项目完成' -Data @{ id=$action.id; module=$module; title=$action.title; durationMs=[math]::Round($actionTimer.Elapsed.TotalMilliseconds); detail=$actionOutcome }
+            catch {
+                $timer.Stop()
+                [void]$blocked.Add([string]$action.id)
+                $message = ConvertTo-RedactedText $_.Exception.Message
+                Write-SetupStatus -Kind Error -Message "$($action.title) 失败：$message"
+                $results += [pscustomobject]@{ id=$action.id; module=$module; status='Failed'; error=$message; detail=$null; durationMs=[math]::Round($timer.Elapsed.TotalMilliseconds) }
             }
-            else {
-                [void]$failedOrBlockedIds.Add([string]$action.id)
-                if ($action.critical) { Write-SetupStatus -Kind Warning -Message '关键操作失败；继续执行不依赖此操作的模块。' }
-            }
-            $results += [pscustomobject]@{ id=$action.id; module=$module; status=$actionStatus; error=$actionError; detail=$actionOutcome; durationMs=[math]::Round($actionTimer.Elapsed.TotalMilliseconds) }
-        }
-        if ($module -eq 'Updates' -and -not $WhatIfPreference -and $updateOutcomes.Count -gt 0) {
-            $availableUpdates = @($updateOutcomes | Where-Object updateStatus -eq 'Available').Count
-            $currentPackages = @($updateOutcomes | Where-Object updateStatus -eq 'Current').Count
-            $unknownPackages = @($updateOutcomes | Where-Object updateStatus -eq 'Unknown').Count
-            Write-Host ''
-            Write-Host '  更新检查摘要' -ForegroundColor Cyan
-            Write-Host "    有可用更新：$availableUpdates 项；未发现更新：$currentPackages 项；无法确认：$unknownPackages 项。"
-            Write-Host '    本步骤只进行了查询，没有下载或安装更新。' -ForegroundColor DarkGray
         }
     }
     return $results
@@ -1103,61 +773,204 @@ function Get-DefaultSetupStateRoot {
 }
 
 function Test-SetupPathWithinRoot {
-    param(
-        [Parameter(Mandatory)][string]$Path,
-        [Parameter(Mandatory)][string]$Root
-    )
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Root)
     $fullPath = [System.IO.Path]::GetFullPath($Path)
     $fullRoot = [System.IO.Path]::GetFullPath($Root).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
     return $fullPath.StartsWith($fullRoot, [StringComparison]::OrdinalIgnoreCase)
 }
 
+function Assert-ManagedRollbackTarget {
+    param([Parameter(Mandatory)]$File)
+    Assert-SetupManagedFileTarget -Path ([string]$File.path) -ManagedKind ([string]$File.managedKind) -ManagedRoot ([string]$File.managedRoot)
+}
+
+function Assert-SetupSha256Value {
+    param([AllowNull()][string]$Value, [Parameter(Mandatory)][string]$Field, [switch]$AllowNull)
+    if ($AllowNull -and [string]::IsNullOrWhiteSpace($Value)) { return }
+    if ([string]$Value -notmatch '^(?i:[a-f0-9]{64})$') { throw "回滚清单 $Field 不是有效 SHA-256。" }
+}
+
 function Read-ValidatedRollbackManifest {
     param(
         [Parameter(Mandatory)][string]$ManifestPath,
-        [Parameter(Mandatory)][string]$StateRoot
+        [Parameter(Mandatory)][string]$StateRoot,
+        [switch]$AllowIncompleteRun
     )
     $fullManifestPath = [System.IO.Path]::GetFullPath($ManifestPath)
     if (-not (Test-Path -LiteralPath $fullManifestPath -PathType Leaf)) { throw "回滚清单不存在：$fullManifestPath" }
     $runsRoot = [System.IO.Path]::GetFullPath((Join-Path $StateRoot 'runs'))
     $runRoot = Split-Path -Parent $fullManifestPath
     if ((Split-Path -Parent $runRoot) -ne $runsRoot -or (Split-Path -Leaf $fullManifestPath) -ne 'rollback-manifest.json') {
-        throw '回滚清单不在本工具的 runs 目录中，已拒绝执行。'
+        throw '回滚清单不在本工具的 runs 目录中。'
     }
-
-    try { $manifest = Get-Content -LiteralPath $fullManifestPath -Raw -Encoding utf8 | ConvertFrom-Json -ErrorAction Stop }
-    catch { throw "回滚清单不是有效的 JSON：$($_.Exception.Message)" }
-    if ($manifest.schemaVersion -ne 1) { throw '回滚清单版本不受支持。' }
-    if ([string]$manifest.runId -ne (Split-Path -Leaf $runRoot)) { throw '回滚清单的运行编号与所在目录不一致。' }
-
+    try { $manifest = Get-Content -LiteralPath $fullManifestPath -Raw -Encoding utf8 | ConvertFrom-Json -DateKind String -ErrorAction Stop }
+    catch { throw "回滚清单不是有效 JSON：$($_.Exception.Message)" }
+    Assert-RollbackManifestAuthentication -Path $fullManifestPath -Manifest $manifest
+    $manifestFields = @(
+        'schemaVersion', 'runId', 'createdAt', 'hostBinding', 'userBinding', 'manifestHmac',
+        'runStatus', 'completed', 'completedAt', 'changeCount', 'hasChanges', 'rolledBackAt',
+        'files', 'installedPackages', 'notes'
+    )
+    foreach ($field in $manifestFields) {
+        if ($manifest.PSObject.Properties.Name -notcontains $field) { throw "回滚清单缺少 v3 字段：$field。" }
+    }
+    $unknownManifestFields = @($manifest.PSObject.Properties.Name | Where-Object { $_ -notin $manifestFields })
+    if ($unknownManifestFields.Count -gt 0) { throw "回滚清单包含不支持的字段：$($unknownManifestFields -join '、')。" }
+    if (($manifest.schemaVersion -isnot [int] -and $manifest.schemaVersion -isnot [long]) -or
+        $manifest.schemaVersion -ne 3 -or [string]$manifest.runId -ne (Split-Path -Leaf $runRoot)) {
+        throw '回滚清单标识无效；仅接受 v3 清单。'
+    }
+    $createdAt = [DateTimeOffset]::MinValue
+    if (-not [DateTimeOffset]::TryParse([string]$manifest.createdAt, [ref]$createdAt)) { throw '回滚清单创建时间无效。' }
+    if ([string]$manifest.runStatus -notin @('InProgress', 'Completed', 'Interrupted', 'RolledBack')) { throw '回滚清单运行状态无效。' }
+    if ($manifest.completed -isnot [bool] -or $manifest.hasChanges -isnot [bool] -or
+        ($manifest.changeCount -isnot [int] -and $manifest.changeCount -isnot [long])) {
+        throw '回滚清单运行状态字段类型无效。'
+    }
+    $hasCompletedAt = -not [string]::IsNullOrWhiteSpace([string]$manifest.completedAt)
+    $hasRolledBackAt = -not [string]::IsNullOrWhiteSpace([string]$manifest.rolledBackAt)
+    $parsedTimestamp = [DateTimeOffset]::MinValue
+    if ($hasCompletedAt -and -not [DateTimeOffset]::TryParse([string]$manifest.completedAt, [ref]$parsedTimestamp)) {
+        throw '回滚清单完成时间无效。'
+    }
+    if ($hasRolledBackAt -and -not [DateTimeOffset]::TryParse([string]$manifest.rolledBackAt, [ref]$parsedTimestamp)) {
+        throw '回滚清单回滚时间无效。'
+    }
+    $statusConsistent = switch ([string]$manifest.runStatus) {
+        'InProgress' { -not $manifest.completed -and -not $hasCompletedAt -and -not $hasRolledBackAt }
+        'Interrupted' { -not $manifest.completed -and $hasCompletedAt -and -not $hasRolledBackAt }
+        'Completed' { $manifest.completed -and $hasCompletedAt -and -not $hasRolledBackAt }
+        'RolledBack' { $manifest.completed -and $hasCompletedAt -and $hasRolledBackAt }
+    }
+    if (-not $statusConsistent) { throw '回滚清单运行状态字段相互矛盾。' }
+    if ([string]$manifest.runStatus -in @('InProgress', 'Interrupted') -and -not $AllowIncompleteRun) {
+        throw '该清单来自未完整结束的运行；如已核对目标，请显式指定 -AllowIncompleteRun。'
+    }
+    if ($manifest.hasChanges -ne $true -or [int]$manifest.changeCount -le 0) {
+        throw '该运行没有可恢复的更改。'
+    }
+    if ($hasRolledBackAt) { throw '该运行已经执行过回滚。' }
     $files = @($manifest.files)
-    if ($files.Count -gt 1000) { throw '回滚清单包含过多文件记录，已拒绝执行。' }
+    $installedPackages = @($manifest.installedPackages)
+    if (($files.Count + $installedPackages.Count) -gt 1000) { throw '回滚清单记录超过 1000 条。' }
+    if ([int]$manifest.changeCount -ne ($files.Count + $installedPackages.Count)) { throw '回滚清单 changeCount 与记录数不一致。' }
     $backupRoot = Join-Path $runRoot 'backups'
+    $seenPaths = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($file in $files) {
+        $fileFields = @(
+            'path', 'existed', 'backup', 'beforeSha256', 'appliedSha256', 'backupSha256',
+            'beforeSddl', 'appliedSddl', 'managedKind', 'managedRoot', 'rollbackStatus', 'rollbackError'
+        )
         if ([string]::IsNullOrWhiteSpace([string]$file.path) -or -not [System.IO.Path]::IsPathFullyQualified([string]$file.path)) {
-            throw '回滚清单包含无效的目标文件路径。'
+            throw '回滚清单包含无效目标路径。'
         }
-        if ($file.existed -isnot [bool]) { throw "回滚清单的 existed 字段无效：$($file.path)" }
+        if (-not $seenPaths.Add([System.IO.Path]::GetFullPath([string]$file.path))) { throw "回滚清单包含重复目标：$($file.path)" }
+        foreach ($field in $fileFields) {
+            if ($file.PSObject.Properties.Name -notcontains $field) { throw "文件回滚记录缺少字段 $field：$($file.path)" }
+        }
+        if (@($file.PSObject.Properties.Name | Where-Object { $_ -notin $fileFields }).Count -gt 0) {
+            throw "文件回滚记录包含不支持的字段：$($file.path)"
+        }
+        if ($file.existed -isnot [bool]) { throw "回滚清单 existed 字段无效：$($file.path)" }
+        if ([string]$file.rollbackStatus -notin @('Pending', 'Failed', 'Restored', 'Removed', 'NoChange')) {
+            throw "文件回滚状态无效：$($file.path)"
+        }
+        Assert-ManagedRollbackTarget -File $file
+        Assert-SetupSha256Value -Value ([string]$file.appliedSha256) -Field 'appliedSha256'
+        $currentExists = Test-Path -LiteralPath ([string]$file.path) -PathType Leaf
+        $currentSha = if ($currentExists) { Get-SetupSha256 -Path ([string]$file.path) } else { $null }
+        $currentSddl = if ($IsWindows -and $currentExists) { (Get-Acl -LiteralPath ([string]$file.path)).Sddl } else { $null }
         if ($file.existed) {
-            if ([string]::IsNullOrWhiteSpace([string]$file.backup) -or
-                -not (Test-SetupPathWithinRoot -Path ([string]$file.backup) -Root $backupRoot) -or
+            Assert-SetupSha256Value -Value ([string]$file.beforeSha256) -Field 'beforeSha256'
+            Assert-SetupSha256Value -Value ([string]$file.backupSha256) -Field 'backupSha256'
+            if (-not (Test-SetupPathWithinRoot -Path ([string]$file.backup) -Root $backupRoot) -or
                 -not (Test-Path -LiteralPath ([string]$file.backup) -PathType Leaf)) {
-                throw "回滚备份缺失或超出本次运行目录：$($file.path)"
+                throw "回滚备份缺失或越界：$($file.path)"
+            }
+            $backupSha = Get-SetupSha256 -Path ([string]$file.backup)
+            if ($backupSha -ne [string]$file.backupSha256 -or $backupSha -ne [string]$file.beforeSha256) {
+                throw "回滚备份哈希不匹配：$($file.path)"
+            }
+            if (-not $currentExists) { throw "受管文件在回滚前意外丢失：$($file.path)" }
+            if ($IsWindows -and ([string]::IsNullOrWhiteSpace([string]$file.beforeSddl) -or
+                [string]::IsNullOrWhiteSpace([string]$file.appliedSddl))) {
+                throw "回滚清单缺少 Windows ACL 证据：$($file.path)"
+            }
+            $allowedCurrentHashes = if ([string]$file.rollbackStatus -in @('Restored', 'NoChange')) {
+                @([string]$file.beforeSha256)
+            }
+            else { @([string]$file.appliedSha256, [string]$file.beforeSha256) }
+            if ($currentSha -notin $allowedCurrentHashes) { throw "受管文件在应用后已被修改，拒绝回滚：$($file.path)" }
+            if ($IsWindows) {
+                $expectedSddl = if ($currentSha -eq [string]$file.beforeSha256) { [string]$file.beforeSddl } else { [string]$file.appliedSddl }
+                if (-not [string]::Equals($currentSddl, $expectedSddl, [StringComparison]::Ordinal)) {
+                    throw "受管文件 ACL 在应用后已被修改，拒绝回滚：$($file.path)"
+                }
             }
         }
-        elseif (-not [string]::IsNullOrWhiteSpace([string]$file.backup)) {
-            throw "原本不存在的文件不应带有备份路径：$($file.path)"
+        else {
+            foreach ($field in @('backup', 'beforeSha256', 'backupSha256', 'beforeSddl')) {
+                if (-not [string]::IsNullOrWhiteSpace([string]$file.$field)) { throw "新增文件不能包含 $field：$($file.path)" }
+            }
+            if ($IsWindows -and $currentExists -and [string]::IsNullOrWhiteSpace([string]$file.appliedSddl)) {
+                throw "回滚清单缺少新增文件的 Windows ACL 证据：$($file.path)"
+            }
+            if ([string]$file.rollbackStatus -in @('Removed', 'NoChange')) {
+                if ($currentExists) { throw "已回滚的新文件再次出现：$($file.path)" }
+            }
+            elseif ($currentExists -and $currentSha -ne [string]$file.appliedSha256) {
+                throw "新增文件在应用后已被修改，拒绝删除：$($file.path)"
+            }
+            elseif ($IsWindows -and $currentExists -and
+                -not [string]::Equals($currentSddl, [string]$file.appliedSddl, [StringComparison]::Ordinal)) {
+                throw "新增文件 ACL 在应用后已被修改，拒绝删除：$($file.path)"
+            }
         }
     }
-
-    $packages = @($manifest.installedPackages)
-    foreach ($package in $packages) {
-        if ([string]$package.id -notmatch '^[A-Za-z0-9._-]+$' -or [string]$package.source -notin @('winget', 'msstore')) {
-            throw '回滚清单包含无效的软件包记录。'
+    $seenPackages = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($package in $installedPackages) {
+        $packageFields = @('id', 'source', 'installedVersion', 'rollbackStatus', 'rollbackError')
+        foreach ($field in $packageFields) {
+            if ($package.PSObject.Properties.Name -notcontains $field) { throw "软件包回滚记录缺少字段 $field。" }
+        }
+        if (@($package.PSObject.Properties.Name | Where-Object { $_ -notin $packageFields }).Count -gt 0) {
+            throw '软件包回滚记录包含不支持的字段。'
+        }
+        if (-not (Test-ManagedWindowsPackage -Id ([string]$package.id) -Source ([string]$package.source)) -or
+            [string]::IsNullOrWhiteSpace([string]$package.installedVersion) -or
+            [string]$package.rollbackStatus -notin @('Pending', 'Failed', 'Uninstalled', 'NoChange')) {
+            throw '回滚清单包含无效软件包。'
+        }
+        if (-not $seenPackages.Add(([string]$package.source + '|' + [string]$package.id))) { throw "回滚清单包含重复软件包：$($package.id)" }
+    }
+    $packageStates = @{}
+    if ($installedPackages.Count -gt 0) {
+        $packageCatalog = Get-WindowsPackageCatalog
+        foreach ($package in $installedPackages) {
+            $current = Get-WindowsPackageState -PackageId ([string]$package.id) -Source ([string]$package.source) -Catalog $packageCatalog
+            if ($current.state -eq 'Unknown') {
+                throw "无法精确确认软件包状态；回滚尚未修改任何内容：$($package.id)：$($current.error)"
+            }
+            if ([string]$package.rollbackStatus -in @('Uninstalled', 'NoChange') -and $current.installed) {
+                throw "已完成回滚的软件包再次出现：$($package.id)"
+            }
+            if ($current.installed -and -not [string]::Equals(
+                [string]$current.version,
+                [string]$package.installedVersion,
+                [StringComparison]::OrdinalIgnoreCase
+            )) {
+                throw "软件包版本已变化，拒绝卸载：$($package.id)（本次安装 $($package.installedVersion)，当前 $($current.version)）"
+            }
+            $packageStates[(([string]$package.source).ToLowerInvariant() + '|' + ([string]$package.id).ToLowerInvariant())] = $current
         }
     }
-    return [pscustomobject]@{
-        path=$fullManifestPath; files=$files; installedPackages=$packages; notes=@($manifest.notes)
+    [pscustomobject]@{
+        path=$fullManifestPath
+        raw=$manifest
+        files=$files
+        installedPackages=$installedPackages
+        packageStates=$packageStates
+        notes=@($manifest.notes)
     }
 }
 
@@ -1166,36 +979,198 @@ function Invoke-CodexSetupRollback {
     param(
         [Parameter(Mandatory)][string]$ManifestPath,
         [switch]$NonInteractive,
+        [switch]$AllowIncompleteRun,
         [string]$StateRoot = (Get-DefaultSetupStateRoot)
     )
-    # Validate the complete manifest before touching any target. A user-supplied
-    # JSON file must never turn rollback into an arbitrary copy/delete primitive.
-    $manifest = Read-ValidatedRollbackManifest -ManifestPath $ManifestPath -StateRoot $StateRoot
-    foreach ($file in @($manifest.files | Select-Object -Last 999 | Sort-Object { [array]::IndexOf($manifest.files, $_) } -Descending)) {
-        if ($file.existed -and $file.backup -and (Test-Path -LiteralPath $file.backup)) {
-            if ($PSCmdlet.ShouldProcess($file.path, '恢复备份文件')) {
-                [System.IO.Directory]::CreateDirectory((Split-Path -Parent $file.path)) | Out-Null
-                Copy-Item -LiteralPath $file.backup -Destination $file.path -Force
+    $manifest = Read-ValidatedRollbackManifest -ManifestPath $ManifestPath -StateRoot $StateRoot -AllowIncompleteRun:$AllowIncompleteRun
+    $fileCount = @($manifest.files).Count
+    $packageCount = @($manifest.installedPackages).Count
+    Write-Host ''
+    Write-Host '准备撤销一次由本工具完成的更改' -ForegroundColor Yellow
+    Write-Host "  运行时间：$($manifest.raw.completedAt)"
+    Write-Host "  文件：$fileCount 个（恢复原文件或删除本次新建文件）"
+    Write-Host "  软件包：$packageCount 个（逐个尝试卸载）"
+    foreach ($note in @($manifest.notes | Select-Object -First 3)) { Write-Host "  不自动撤销：$note" -ForegroundColor DarkGray }
+    if ($WhatIfPreference) {
+        Write-SetupStatus -Kind Info -Message '当前是预览；没有恢复文件或卸载软件包。'
+        return [pscustomobject]@{ status='Preview'; restored=0; removed=0; uninstalled=0; failed=0; skipped=0; manifestPath=$manifest.path }
+    }
+    if (-not $NonInteractive -and -not (Confirm-SetupChoice -Prompt '确认撤销以上更改？' -DefaultYes:$false)) {
+        Write-SetupStatus -Kind Info -Message '已取消回滚；没有修改电脑。'
+        return [pscustomobject]@{ status='Cancelled'; restored=0; removed=0; uninstalled=0; failed=0; skipped=($fileCount + $packageCount); manifestPath=$manifest.path }
+    }
+    $restored = 0
+    $removed = 0
+    $uninstalled = 0
+    $failed = 0
+    $skipped = 0
+    $fileChangesSinceCheckpoint = 0
+    for ($index = $manifest.files.Count - 1; $index -ge 0; $index--) {
+        $file = $manifest.files[$index]
+        if ([string]$file.rollbackStatus -in @('Restored', 'Removed', 'NoChange')) { $skipped++; continue }
+        try {
+            if ($file.existed) {
+                $currentSha = Get-SetupSha256 -Path ([string]$file.path)
+                if ($currentSha -eq [string]$file.beforeSha256) {
+                    if ($IsWindows -and -not [string]::Equals(
+                        (Get-Acl -LiteralPath ([string]$file.path)).Sddl,
+                        [string]$file.beforeSddl,
+                        [StringComparison]::Ordinal
+                    )) { throw '目标 ACL 在预检后发生变化。' }
+                    $file.rollbackStatus = 'NoChange'
+                    $file.rollbackError = $null
+                    $skipped++
+                    $fileChangesSinceCheckpoint++
+                    if ($fileChangesSinceCheckpoint -ge 25) {
+                        Write-RollbackManifestAtomic -Path $manifest.path -Manifest $manifest.raw
+                        $fileChangesSinceCheckpoint = 0
+                    }
+                    continue
+                }
+                if ($currentSha -ne [string]$file.appliedSha256) { throw '目标哈希在预检后发生变化。' }
+                if ($IsWindows -and -not [string]::Equals(
+                    (Get-Acl -LiteralPath ([string]$file.path)).Sddl,
+                    [string]$file.appliedSddl,
+                    [StringComparison]::Ordinal
+                )) { throw '目标 ACL 在预检后发生变化。' }
+                $parent = Split-Path -Parent ([string]$file.path)
+                [System.IO.Directory]::CreateDirectory($parent) | Out-Null
+                $temporaryPath = Join-Path $parent ('.{0}.{1}.rollback' -f (Split-Path -Leaf ([string]$file.path)), [guid]::NewGuid().ToString('N'))
+                try {
+                    Copy-Item -LiteralPath $file.backup -Destination $temporaryPath -Force
+                    if ($IsWindows) {
+                        $acl = Get-Acl -LiteralPath $temporaryPath
+                        $acl.SetSecurityDescriptorSddlForm([string]$file.beforeSddl)
+                        Set-Acl -LiteralPath $temporaryPath -AclObject $acl
+                    }
+                    if ((Get-SetupSha256 -Path $temporaryPath) -ne [string]$file.beforeSha256) { throw '临时恢复文件哈希复核失败。' }
+                    if ($IsWindows -and -not [string]::Equals(
+                        (Get-Acl -LiteralPath $temporaryPath).Sddl,
+                        [string]$file.beforeSddl,
+                        [StringComparison]::Ordinal
+                    )) { throw '临时恢复文件 ACL 复核失败。' }
+                    if ((Get-SetupSha256 -Path ([string]$file.path)) -ne [string]$file.appliedSha256) { throw '目标哈希在原子替换前发生变化。' }
+                    if ($IsWindows -and -not [string]::Equals(
+                        (Get-Acl -LiteralPath ([string]$file.path)).Sddl,
+                        [string]$file.appliedSddl,
+                        [StringComparison]::Ordinal
+                    )) { throw '目标 ACL 在原子替换前发生变化。' }
+                    [System.IO.File]::Move($temporaryPath, [string]$file.path, $true)
+                }
+                finally {
+                    if (Test-Path -LiteralPath $temporaryPath -PathType Leaf) {
+                        Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+                    }
+                }
+                if ((Get-SetupSha256 -Path ([string]$file.path)) -ne [string]$file.beforeSha256) { throw '恢复后哈希复核失败。' }
+                if ($IsWindows -and -not [string]::Equals(
+                    (Get-Acl -LiteralPath ([string]$file.path)).Sddl,
+                    [string]$file.beforeSddl,
+                    [StringComparison]::Ordinal
+                )) {
+                    throw '恢复后 ACL 复核失败。'
+                }
+                $file.rollbackStatus = 'Restored'
+                $file.rollbackError = $null
+                $restored++
+            }
+            elseif (Test-Path -LiteralPath $file.path -PathType Leaf) {
+                if ((Get-SetupSha256 -Path ([string]$file.path)) -ne [string]$file.appliedSha256) { throw '目标哈希在预检后发生变化。' }
+                if ($IsWindows -and -not [string]::Equals(
+                    (Get-Acl -LiteralPath ([string]$file.path)).Sddl,
+                    [string]$file.appliedSddl,
+                    [StringComparison]::Ordinal
+                )) { throw '目标 ACL 在预检后发生变化。' }
+                Remove-Item -LiteralPath $file.path -Force -ErrorAction Stop
+                if (Test-Path -LiteralPath $file.path) { throw '删除后文件仍然存在。' }
+                $file.rollbackStatus = 'Removed'
+                $file.rollbackError = $null
+                $removed++
+            }
+            else {
+                $file.rollbackStatus = 'NoChange'
+                $file.rollbackError = $null
+                $skipped++
+            }
+            $fileChangesSinceCheckpoint++
+            if ($fileChangesSinceCheckpoint -ge 25) {
+                Write-RollbackManifestAtomic -Path $manifest.path -Manifest $manifest.raw
+                $fileChangesSinceCheckpoint = 0
             }
         }
-        elseif (-not $file.existed -and (Test-Path -LiteralPath $file.path)) {
-            if ($PSCmdlet.ShouldProcess($file.path, '删除本次运行创建的文件')) { Remove-Item -LiteralPath $file.path -Force }
+        catch {
+            $file.rollbackStatus = 'Failed'
+            $file.rollbackError = ConvertTo-RedactedText $_.Exception.Message
+            Write-RollbackManifestAtomic -Path $manifest.path -Manifest $manifest.raw
+            $fileChangesSinceCheckpoint = 0
+            $failed++
+            Write-SetupStatus -Kind Error -Message "无法恢复 $($file.path)：$($file.rollbackError)"
         }
     }
-    foreach ($package in @($manifest.installedPackages)) {
-        $remove = Confirm-SetupChoice -Prompt "是否卸载本次安装的软件包 $($package.id)？" -DefaultYes:$false -NonInteractive:$NonInteractive
-        if ($remove -and $PSCmdlet.ShouldProcess($package.id, '使用 winget 卸载本次安装的软件包')) {
-            Invoke-ExternalSetupCommand -Command 'winget.exe' -Arguments @('uninstall', '--id', $package.id, '--exact', '--source', $package.source) -AllowFailure | Out-Null
+    if ($fileChangesSinceCheckpoint -gt 0) {
+        Write-RollbackManifestAtomic -Path $manifest.path -Manifest $manifest.raw
+    }
+    foreach ($package in $manifest.installedPackages) {
+        if ([string]$package.rollbackStatus -in @('Uninstalled', 'NoChange')) { $skipped++; continue }
+        try {
+            $packageStateKey = ([string]$package.source).ToLowerInvariant() + '|' + ([string]$package.id).ToLowerInvariant()
+            $beforePackage = $manifest.packageStates[$packageStateKey]
+            if (-not [bool]$beforePackage.installed) {
+                $package.rollbackStatus = 'NoChange'
+                $package.rollbackError = $null
+                $skipped++
+                Write-RollbackManifestAtomic -Path $manifest.path -Manifest $manifest.raw
+                continue
+            }
+            $currentPackage = Get-WindowsPackageState -PackageId ([string]$package.id) -Source ([string]$package.source)
+            if ($currentPackage.state -eq 'Unknown') { throw "卸载前无法再次确认软件包状态：$($currentPackage.error)" }
+            if (-not $currentPackage.installed) {
+                $package.rollbackStatus = 'NoChange'
+                $package.rollbackError = $null
+                $skipped++
+                Write-RollbackManifestAtomic -Path $manifest.path -Manifest $manifest.raw
+                continue
+            }
+            if (-not [string]::Equals(
+                [string]$currentPackage.version,
+                [string]$package.installedVersion,
+                [StringComparison]::OrdinalIgnoreCase
+            )) { throw "卸载前软件包版本已变化：$($package.id)" }
+            $exitCode = Invoke-ExternalSetupCommand -Command 'winget.exe' -Arguments @(
+                'uninstall', '--id', [string]$package.id, '--exact', '--source', [string]$package.source,
+                '--accept-source-agreements', '--disable-interactivity', '--silent'
+            ) -AllowFailure -Quiet
+            if ($exitCode -ne 0) { throw "WinGet 卸载命令失败（exit=$exitCode）。" }
+            $after = Get-WindowsPackageState -PackageId ([string]$package.id) -Source ([string]$package.source)
+            if ($after.state -eq 'Unknown') { throw "卸载后无法复核软件包状态（exit=$exitCode）。" }
+            if ($after.installed) { throw "卸载后软件包仍存在（exit=$exitCode）。" }
+            $package.rollbackStatus = 'Uninstalled'
+            $package.rollbackError = $null
+            $uninstalled++
+            Write-RollbackManifestAtomic -Path $manifest.path -Manifest $manifest.raw
+        }
+        catch {
+            $package.rollbackStatus = 'Failed'
+            $package.rollbackError = ConvertTo-RedactedText $_.Exception.Message
+            Write-RollbackManifestAtomic -Path $manifest.path -Manifest $manifest.raw
+            $failed++
+            Write-SetupStatus -Kind Error -Message "无法卸载 $($package.id)：$($package.rollbackError)"
         }
     }
-    Write-SetupStatus -Kind Success -Message "回滚处理完成：$($manifest.path)"
-    if ($manifest.notes.Count -gt 0) {
-        Write-Host '以下项目需要人工复核：' -ForegroundColor Yellow
-        foreach ($note in $manifest.notes) { Write-Host "  - $note" -ForegroundColor Yellow }
+    $status = if ($failed -gt 0) { 'Partial' } else { 'Completed' }
+    if ($failed -eq 0) {
+        $manifest.raw.rolledBackAt = (Get-Date).ToString('o')
+        $manifest.raw.runStatus = 'RolledBack'
+        Write-RollbackManifestAtomic -Path $manifest.path -Manifest $manifest.raw
+        Write-SetupStatus -Kind Success -Message "已撤销：恢复 $restored 个文件，删除 $removed 个新文件，卸载 $uninstalled 个软件包。"
     }
+    else {
+        Write-SetupStatus -Kind Warning -Message "回滚未完全完成：成功处理 $($restored + $removed + $uninstalled) 项，失败 $failed 项，未处理 $skipped 项。"
+    }
+    return [pscustomobject]@{ status=$status; restored=$restored; removed=$removed; uninstalled=$uninstalled; failed=$failed; skipped=$skipped; manifestPath=$manifest.path }
 }
 
 Export-ModuleMember -Function @(
     'Invoke-CodexSetupPlan', 'Invoke-CodexSetupRollback', 'New-ProjectTemplateMap',
-    'Select-WslNetworkConfiguration', 'Convert-WindowsPathToWsl', 'Set-WslNetworkingConfig'
+    'Convert-WindowsPathToWsl', 'Set-WslNetworkingConfig'
 )

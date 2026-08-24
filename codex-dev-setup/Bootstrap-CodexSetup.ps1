@@ -22,7 +22,7 @@ if (-not $pwsh) {
             exit 0
         }
     }
-    & $winget.Source install --id Microsoft.PowerShell --exact --source winget --accept-source-agreements --accept-package-agreements
+    & $winget.Source install --id Microsoft.PowerShell --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
     if ($LASTEXITCODE -ne 0) { throw "PowerShell 7 安装失败（退出代码：$LASTEXITCODE）。" }
     $pwshPath = Join-Path $env:ProgramFiles 'PowerShell\7\pwsh.exe'
     if (-not (Test-Path -LiteralPath $pwshPath)) {

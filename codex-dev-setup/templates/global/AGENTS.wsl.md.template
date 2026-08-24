@@ -1,0 +1,9 @@
+# Development environment
+
+- The canonical development environment is WSL2 Ubuntu.
+- Run development commands directly in Bash. Linux-native `pwsh` may run repository-provided `.ps1` commands; never substitute Windows PowerShell, Command Prompt, Git for Windows Git Bash, `wsl.exe`, shell wrappers, or Windows executables.
+- Use Linux paths and keep repositories under `~/code` or another `/home` path. Do not develop under `/mnt`.
+- Use Linux-native Git, Python, Node.js, package managers, test tools, and Codex commands.
+- Do not share `node_modules`, virtual environments, package caches, or tool installations between Windows and WSL.
+- Prefer repository scripts and project-local dependencies over ad-hoc commands and global installs.
+- Diagnose the first failed command by checking `pwd`, `uname -s`, `WSL_DISTRO_NAME`, the active shell, and relevant command paths before retrying.

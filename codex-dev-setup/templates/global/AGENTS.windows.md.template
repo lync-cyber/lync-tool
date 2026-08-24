@@ -1,0 +1,8 @@
+# Development environment
+
+- The canonical development environment is Windows native for Windows-specific APIs and toolchains.
+- Run development commands directly in PowerShell 7 with Windows-native Git and Windows paths.
+- Do not use WSL, Git Bash, shell wrappers, or Linux commands for repository work.
+- Keep repositories in a Windows directory. Do not operate on repositories through `\\\\wsl$`.
+- Prefer repository scripts and project-local dependencies over ad-hoc commands and global installs.
+- Diagnose the first failed command by checking the current path, PowerShell version, active process architecture, and relevant command paths before retrying.
