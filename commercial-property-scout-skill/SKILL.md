@@ -24,7 +24,7 @@ description: 通过简短选择题访谈明确商铺、办公室、写字楼、�
 - 报告/踩点：`references/report-spec.md`、`references/site-visit-rules.md`、`references/script-contracts.md`；
 - 批量表格或已保存 HTML：仅在需要时读取对应 ingestion/extraction reference。
 
-`references/source-registry.json` 是可配置的来源目录和初始先验，不是永久排名，也不意味着任何平台在所有城市都必选。
+`references/source-registry.json` 是可配置的来源目录和初始先验。贝壳与链家是本技能的必查主源；只有用户明确授权豁免时才可跳过其中之一。
 
 ## 工作流
 
@@ -58,15 +58,17 @@ uv run python scripts/validate_brief.py <workspace>/data/search_brief.json -o <w
 4. `benchmark`：独立市场基准；
 5. `lead_only`：只能提供线索的来源。
 
-把本任务适用的高可靠来源标为 `critical` 或 `high`，先尝试这些来源。搜索引擎没有结果不等于已经访问过平台。每个来源都必须记录明确状态；可以使用：
+把贝壳与链家分别列为 `critical` 的 `primary_discovery`，并在任何其他房源平台之前逐一直接尝试。不得把贝壳和链家合并成一个来源，也不得用其中一个或房天下、安居客、58 等替代另一个。搜索引擎没有结果不等于已经访问过平台。每个来源都必须记录明确状态；可以使用：
 
 ```bash
 uv run python scripts/record_source_status.py <workspace>/data/source_plan.json \
-  --key <key> --name <名称> --role <角色> --priority high \
+  --key <key> --name <名称> --role <角色> --priority critical \
   --status <状态> --reason <说明> --result-count <数量>
 ```
 
-高优先级来源允许得到零结果；不得因此伪造房源。覆盖终态必须是 `completed_with_results`、`completed_zero_results`，或带同角色替代来源的 `blocked_login`、`blocked_captcha`、`access_limited`、`unavailable`。`skipped_with_reason` 只记录计划变化，不算高优先级来源已尝试。若因登录、验证码或访问限制无法完成，记录原因并完成一个同角色替代来源。
+贝壳与链家允许在完成计划内搜索后得到零结果；不得因此伪造房源。两者只有 `completed_with_results` 或 `completed_zero_results` 才算完成。若任一必查主源出现登录、验证码、访问限制、超时、空白页、入口失效、筛选失灵或浏览器不可用，立即保持当前页面和状态，停止访问其他房源平台、停止采集和停止生成报告，明确告诉用户平台、URL、故障表现及需要用户执行的动作，等待用户介入。用户确认恢复后才从同一来源继续。替代来源不能解除此闸门。
+
+只有用户明确说可以跳过某个必查主源时，才在 `source_plan.json` 中记录 `user_authorized_waiver: true`、被豁免的 `source_key` 和用户原话；执行者不得自行推断豁免。
 
 房源平台的实际访问、筛选和详情核验必须在用户可见且可人工接管的浏览器标签页中完成。开始访问第一个房源平台前先把该浏览器页面显示给用户，并在采集期间保留正在操作的标签页。后台网页抓取、搜索索引或 HTTP 响应只能用于市场基准、辅助发现和交叉核验，不能替代高优先级平台的浏览器直访，也不能单独据此判定平台出现验证码、登录墙或访问限制。
 
@@ -92,7 +94,7 @@ uv run python scripts/record_source_status.py <workspace>/data/source_plan.json 
 
 ### 5. 遵守访问限制
 
-只有用户可见、当前正在操作的浏览器标签页真实出现 CAPTCHA、滑块、短信、二维码登录或二次验证时，才立即暂停并把平台、当前 URL 和用户动作记录到状态中。保持同一标签页可见且不刷新，请用户本人完成后从该页继续。用户确认完成后，在同一来源第一次恢复为 `in_progress` 或完成态时清除等待标记，并继续原搜索通道，避免永久停留在验证码等待状态。后台抓取工具返回的验证码页只记为辅助访问异常；必须先在可见浏览器中复现，才能写入 `blocked_captcha` 或请求人工接管。不得自动破解、绕过或对抗访问控制。
+只有用户可见、当前正在操作的浏览器标签页真实出现 CAPTCHA、滑块、短信、二维码登录或二次验证时，才写入对应验证状态。必查主源出现验证或其他网站故障时都必须立即暂停并记录平台、当前 URL、故障表现和用户动作；保持同一标签页可见且不刷新，请用户本人处理后从该页继续。用户确认完成后，在同一来源第一次恢复为 `in_progress` 或完成态时清除等待标记，并继续原搜索通道。后台抓取工具返回的验证码页只记为辅助访问异常；必须先在可见浏览器中复现，才能写入 `blocked_captcha` 或请求人工接管。不得自动破解、绕过或对抗访问控制。
 
 ### 6. 运行确定性流水线
 
@@ -100,7 +102,7 @@ uv run python scripts/record_source_status.py <workspace>/data/source_plan.json 
 uv run python scripts/run_pipeline.py <workspace>
 ```
 
-该入口只执行：brief/source/collection QA → 规范化 → profile → 保守去重 → 价格预警 → 成本与匹配评分 → 踩点分组 → 数据 QA → HTML。collection QA 有 blocker 时报告只能是发现阶段工作稿。
+该入口只执行：brief/source/collection QA → 规范化 → profile → 保守去重 → 价格预警 → 成本与匹配评分 → 踩点分组 → 数据 QA → HTML。任一必查主源未完成或正在等待用户介入时，流水线必须在 source QA 后直接退出，不得生成工作稿或 HTML；其他 collection QA blocker 才允许按成熟度规则保留发现阶段工作稿。
 
 脚本不是事实裁判：
 

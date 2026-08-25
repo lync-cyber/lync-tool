@@ -82,14 +82,15 @@ def main():
             row["fixed_cost_components_confirmed"] = True
         (root/"data/raw_listings.json").write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
 
-        # Source coverage is task-specific: high-priority direct discovery must be attempted,
-        # while zero-result verification/benchmark attempts are valid and auditable.
+        # Beike and Lianjia are separate required primary sources. Other platforms
+        # cannot substitute for either one, while genuine zero-result completion is valid.
         source_plan = root/"data/source_plan.json"
         state = root/"state.json"
         pre_coverage = subprocess.run([str(py), str(skill/"scripts/validate_source_coverage.py"), str(source_plan), str(root/"data/raw_listings.json"), "-o", str(root/"data/pre_source_qa.json"), "--strict"], text=True, capture_output=True)
         assert pre_coverage.returncode == 2, pre_coverage.stdout + pre_coverage.stderr
         source_rows = [
-            ("beike", "贝壳", "primary_discovery", "high", "completed_with_results", 3),
+            ("beike", "贝壳", "primary_discovery", "critical", "completed_with_results", 3),
+            ("lianjia", "链家", "primary_discovery", "critical", "completed_zero_results", 0),
             ("fang", "房天下", "primary_discovery", "normal", "completed_with_results", 3),
             ("official", "业主/项目官方", "verification", "normal", "completed_zero_results", 0),
             ("jll", "JLL", "benchmark", "normal", "completed_zero_results", 0),
@@ -98,16 +99,31 @@ def main():
         for key, name, role, priority, status, count in source_rows:
             run([py, skill/"scripts/record_source_status.py", source_plan, "--key", key, "--name", name, "--role", role, "--priority", priority, "--status", status, "--result-count", str(count), "--state", state])
 
+        # A blocked required source must stop the pipeline even when Fang is complete.
+        run([py, skill/"scripts/record_source_status.py", source_plan, "--key", "lianjia", "--name", "链家", "--role", "primary_discovery", "--priority", "critical", "--status", "access_limited", "--url", "https://example.com/lianjia-timeout", "--reason", "筛选页面持续超时，等待用户介入", "--state", state])
+        blocked_pipeline = subprocess.run([str(py), str(skill/"scripts/run_pipeline.py"), str(root), "--skill-root", str(skill)], text=True, capture_output=True)
+        assert blocked_pipeline.returncode == 2, blocked_pipeline.stdout + blocked_pipeline.stderr
+        assert not list(root.glob("commercial_property_report_*.html"))
+        blocked_qa = json.loads((root/"data/source_qa_report.json").read_text(encoding="utf-8"))
+        assert "required_source_access_blocked" in {x["code"] for x in blocked_qa["issues"]}, blocked_qa
+        blocked_state = json.loads(state.read_text(encoding="utf-8"))
+        assert blocked_state["user_intervention_waiting_on"]["source_key"] == "lianjia"
+        forbidden_start = subprocess.run([str(py), str(skill/"scripts/record_source_status.py"), str(source_plan), "--key", "fang", "--name", "房天下", "--role", "primary_discovery", "--priority", "normal", "--status", "in_progress", "--state", str(state)], text=True, capture_output=True)
+        assert forbidden_start.returncode != 0
+        run([py, skill/"scripts/record_source_status.py", source_plan, "--key", "lianjia", "--name", "链家", "--role", "primary_discovery", "--priority", "critical", "--status", "completed_zero_results", "--result-count", "0", "--state", state])
+        resumed_after_lianjia = json.loads(state.read_text(encoding="utf-8"))
+        assert "user_intervention_waiting_on" not in resumed_after_lianjia
+
         # A real CAPTCHA pause must be recoverable on the same source without
         # leaving a stale workspace-wide waiting flag.
-        run([py, skill/"scripts/record_source_status.py", source_plan, "--key", "beike", "--name", "贝壳", "--role", "primary_discovery", "--priority", "high", "--status", "blocked_captcha", "--url", "https://example.com/challenge", "--reason", "请在当前页完成验证", "--state", state])
+        run([py, skill/"scripts/record_source_status.py", source_plan, "--key", "beike", "--name", "贝壳", "--role", "primary_discovery", "--priority", "critical", "--status", "blocked_captcha", "--url", "https://example.com/challenge", "--reason", "请在当前页完成验证", "--state", state])
         waiting_state = json.loads(state.read_text(encoding="utf-8"))
         assert waiting_state["captcha_waiting_on"]["source_key"] == "beike"
-        run([py, skill/"scripts/record_source_status.py", source_plan, "--key", "beike", "--name", "贝壳", "--role", "primary_discovery", "--priority", "high", "--status", "in_progress", "--url", "https://example.com/results", "--state", state])
+        run([py, skill/"scripts/record_source_status.py", source_plan, "--key", "beike", "--name", "贝壳", "--role", "primary_discovery", "--priority", "critical", "--status", "in_progress", "--url", "https://example.com/results", "--state", state])
         resumed_state = json.loads(state.read_text(encoding="utf-8"))
         assert "captcha_waiting_on" not in resumed_state
         assert resumed_state["captcha_last_resolved"]["source_key"] == "beike"
-        run([py, skill/"scripts/record_source_status.py", source_plan, "--key", "beike", "--name", "贝壳", "--role", "primary_discovery", "--priority", "high", "--status", "completed_with_results", "--result-count", "3", "--state", state])
+        run([py, skill/"scripts/record_source_status.py", source_plan, "--key", "beike", "--name", "贝壳", "--role", "primary_discovery", "--priority", "critical", "--status", "completed_with_results", "--result-count", "3", "--state", state])
 
         # Discovery coverage requires search depth, geographic counter-sampling, and project reverse searches.
         collection_log = root/"data/collection_log.json"

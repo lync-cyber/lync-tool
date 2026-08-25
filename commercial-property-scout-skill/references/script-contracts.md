@@ -8,7 +8,7 @@
 
 ## `init_workspace.py`
 
-创建标准工作目录、brief 模板、source plan、raw JSON 和 state。平台选择保持为空，由 LLM 按市场填写。
+创建标准工作目录、brief 模板、raw JSON 和 state，并在 source plan 中预置贝壳与链家两个 `critical` 必查主源；其他平台由 LLM 按市场填写。
 
 ## `validate_brief.py`
 
@@ -16,11 +16,11 @@
 
 ## `record_source_status.py`
 
-安全更新单个来源的任务级状态，避免自由手写状态值。验证码人工完成后，同一来源恢复为 `in_progress` 或完成态时清除对应等待标记并保留恢复时间。它不访问平台，也不自动选择来源。
+安全更新单个来源的任务级状态，避免自由手写状态值。必查主源受限时写入人工介入等待状态，并阻止启动其他来源；同一来源恢复为 `in_progress` 或完成态时清除等待标记并保留恢复时间。替代来源参数不被接受。它不访问平台，也不自动选择来源。
 
 ## `validate_source_coverage.py`
 
-检查高优先级来源是否已尝试、角色最低覆盖、受限来源是否有替代，以及单平台集中度。零结果是有效尝试；搜索引擎无结果不是平台尝试。
+检查贝壳与链家是否分别以 `critical` 主源完成、其他高优先级来源是否已尝试、角色最低覆盖和单平台集中度。必查主源受限或未完成是硬阻断，替代来源不能抵消；零结果是有效完成，搜索引擎无结果不是平台尝试。
 
 ## `record_search_run.py`
 
@@ -92,4 +92,4 @@
 
 ## `run_pipeline.py`
 
-串联 brief/source QA → normalize → dataset profile → dedupe → anomaly → score → visits → consolidated QA → HTML，并回写 `state.json`。它不负责浏览网页或选择平台。
+串联 brief/source QA → normalize → dataset profile → dedupe → anomaly → score → visits → consolidated QA → HTML，并回写 `state.json`。贝壳或链家未完成时在 source QA 后立即退出，不生成 HTML。它不负责浏览网页或选择平台。

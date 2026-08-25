@@ -62,10 +62,24 @@ def main():
         "coverage_policy": {
             "min_terminal_attempts_by_role": {"primary_discovery": 2, "verification": 1, "benchmark": 2},
             "min_high_priority_terminal_attempts": 1,
+            "required_primary_source_keys": ["beike", "lianjia"],
+            "stop_on_required_source_problem": True,
             "max_single_platform_share_warning": 0.65
         },
-        "sources": [],
-        "selection_notes": ["Choose sources for this market from the registry and current public availability; no platform is globally mandatory."]
+        "sources": [
+            {
+                "source_key": "beike", "display_name": "贝壳", "role": "primary_discovery",
+                "priority": "critical", "status": "planned", "url": "", "status_reason": "",
+                "result_count": None, "created_at": now_iso(), "updated_at": now_iso()
+            },
+            {
+                "source_key": "lianjia", "display_name": "链家", "role": "primary_discovery",
+                "priority": "critical", "status": "planned", "url": "", "status_reason": "",
+                "result_count": None, "created_at": now_iso(), "updated_at": now_iso()
+            }
+        ],
+        "required_source_waivers": [],
+        "selection_notes": ["Complete Beike and Lianjia separately before visiting any other listing platform. Only an explicit user waiver may skip either required source."]
     }
     collection_log = {
         "version": 1,
@@ -92,6 +106,7 @@ def main():
         "brief_complete": False,
         "source_plan_path": str(root / "data/source_plan.json"),
         "captcha_waiting_on": None,
+        "user_intervention_waiting_on": None,
         "raw_listing_count": 0,
         "deduped_property_count": 0,
         "verified_property_count": 0,

@@ -1,11 +1,12 @@
 {
   "version": "2026-08",
-  "scope_note": "Configurable starting priors for commercial-property scouting. Entries are a source catalog, not globally required platforms or claims about every listing. Select only sources applicable to the current market and reassess when behavior changes.",
+  "scope_note": "Configurable starting priors for commercial-property scouting. Beike and Lianjia are separately required primary sources unless the user explicitly waives one; other entries remain a source catalog.",
   "default_base_confidence": 50,
   "platforms": {
     "业主/项目官方": {"role": "verification", "selection_priority": 5, "base_confidence": 92, "price_use": "project_or_unit_verification"},
     "政府官方": {"role": "verification", "selection_priority": 5, "base_confidence": 95, "price_use": "transaction_identity_or_official_fact"},
-    "贝壳": {"role": "primary_discovery", "selection_priority": 10, "base_confidence": 75, "price_use": "discovery_and_cross_check", "entry_urls": {"上海": "https://shangye.lianjia.com/sh"}},
+    "贝壳": {"role": "primary_discovery", "selection_priority": 5, "base_confidence": 75, "price_use": "discovery_and_cross_check", "entry_urls": {"上海": "https://sh.ke.com/"}},
+    "链家": {"role": "primary_discovery", "selection_priority": 5, "base_confidence": 75, "price_use": "discovery_and_cross_check", "entry_urls": {"上海": "https://shangye.lianjia.com/sh"}},
     "房天下": {"role": "primary_discovery", "selection_priority": 20, "base_confidence": 64, "price_use": "discovery_and_same_project_comparison", "entry_urls": {"上海": "https://office.fang.com/sh/zu/house/"}},
     "安居客": {"role": "broad_discovery", "selection_priority": 40, "base_confidence": 49, "price_use": "lead_only_until_cross_checked", "entry_urls": {"上海": "https://sh.sydc.anjuke.com/xzl-zu/"}},
     "58同城": {"role": "broad_discovery", "selection_priority": 50, "base_confidence": 45, "price_use": "lead_only_until_cross_checked"},

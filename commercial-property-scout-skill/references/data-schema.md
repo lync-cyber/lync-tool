@@ -54,7 +54,9 @@
 
 ## `source_plan.json`
 
-每个来源保存 `source_key`、名称、角色、任务级优先级、状态、URL、结果数、状态原因和替代来源。角色最低覆盖写入 `coverage_policy`，可按市场稀缺性调整，但必须说明原因。平台是否适用由 LLM 判断；校验脚本只检查计划是否执行，不自动决定平台。
+每个来源保存 `source_key`、名称、角色、任务级优先级、状态、URL、结果数和状态原因。`beike` 与 `lianjia` 必须分别存在，且均为 `critical` / `primary_discovery`；不得记录替代来源来抵消其中任一项。`coverage_policy.required_primary_source_keys` 保存必查键，默认是 `["beike", "lianjia"]`。
+
+只有用户明确授权跳过时，才可在顶层 `required_source_waivers` 追加 `source_key`、`user_authorized_waiver: true` 和非空 `user_quote`。角色最低覆盖写入 `coverage_policy`，可按市场稀缺性调严；执行者不得自行调低必查源规则。
 
 ## `raw_listings.json`
 
