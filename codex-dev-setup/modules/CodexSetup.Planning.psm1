@@ -8,6 +8,25 @@ function Get-PlanningProperty {
     return $Default
 }
 
+function ConvertTo-WindowsPackageUserMessage {
+    param([AllowNull()][string]$ErrorText)
+
+    if ([string]::IsNullOrWhiteSpace($ErrorText)) { return '' }
+    if ($ErrorText -eq 'winget-command-not-found') {
+        return '未找到 WinGet。请先更新或修复 Microsoft App Installer。'
+    }
+    if ($ErrorText -like 'winget-*-timeout:*' -or $ErrorText -like 'winget-source-query-skipped-after-timeout:*') {
+        return 'WinGet 响应超时。请刷新检测；若持续超时，请检查 WinGet 软件源。'
+    }
+    if ($ErrorText -like 'winget-export-*') {
+        return 'WinGet 未能读取已安装应用。请在 Windows Terminal 运行 winget --info 检查状态。'
+    }
+    if ($ErrorText -like 'winget-list-*') {
+        return 'WinGet 未能确认该应用的安装状态。请刷新检测。'
+    }
+    return $ErrorText
+}
+
 function New-SetupAction {
     param(
         [Parameter(Mandatory)][string]$Module,
@@ -75,6 +94,7 @@ function Add-WindowsPackageAction {
     $detectedVersion = [string](Get-PlanningProperty $Detection 'version' '')
     $detectionError = [string](Get-PlanningProperty $Detection 'error' '')
     if (-not $detectionError) { $detectionError = [string](Get-PlanningProperty $Detection 'probeError' '') }
+    $detectionError = ConvertTo-WindowsPackageUserMessage -ErrorText $detectionError
     if ($state -eq 'Unknown' -or (-not $installed -and $detectionError -and $detectionError -ne 'not-required-in-wsl-first')) {
         if (-not $detectionError) { $detectionError = 'Windows 软件包清单状态未知。' }
         $catalogWarning = "无法读取可信的 Windows 软件包清单；状态未知的软件不会自动安装。详情：$detectionError"
@@ -130,7 +150,11 @@ function Get-CodexSetupPlan {
         $information += '当前是标准权限会话；WSL 和 elevated sandbox 首次设置可能触发 UAC。'
     }
     foreach ($issue in @(Get-PlanningProperty $Detection 'issues' @())) {
-        $warnings += "检查未完成（$($issue.name)）：$($issue.error)"
+        $issueError = [string]$issue.error
+        if ([string]$issue.name -eq 'Windows 软件包清单') {
+            $issueError = ConvertTo-WindowsPackageUserMessage -ErrorText $issueError
+        }
+        $warnings += "检查未完成（$($issue.name)）：$issueError"
     }
 
     $windows = $Config.windows

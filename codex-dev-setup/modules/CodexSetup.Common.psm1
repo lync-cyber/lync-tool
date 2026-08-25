@@ -304,9 +304,65 @@ function Assert-RollbackManifestAuthentication {
     }
 }
 
+function Invoke-SetupProcessCapture {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$FilePath,
+        [string[]]$Arguments = @(),
+        [ValidateRange(1, 300)][int]$TimeoutSeconds = 15
+    )
+
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    $process = $null
+    try {
+        $startInfo = [Diagnostics.ProcessStartInfo]::new()
+        $startInfo.FileName = $FilePath
+        $startInfo.UseShellExecute = $false
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+        $startInfo.CreateNoWindow = $true
+        foreach ($argument in $Arguments) { [void]$startInfo.ArgumentList.Add([string]$argument) }
+
+        $process = [Diagnostics.Process]::new()
+        $process.StartInfo = $startInfo
+        if (-not $process.Start()) { throw "无法启动命令：$FilePath" }
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+            try { $process.Kill($true) } catch { }
+            try { [void]$process.WaitForExit(2000) } catch { }
+            $timer.Stop()
+            return [pscustomobject]@{
+                exitCode=$null; output=''; timedOut=$true; error="timeout:${TimeoutSeconds}s"
+                elapsedMs=$timer.ElapsedMilliseconds
+            }
+        }
+        $stdout = $stdoutTask.GetAwaiter().GetResult()
+        $stderr = $stderrTask.GetAwaiter().GetResult()
+        $timer.Stop()
+        return [pscustomobject]@{
+            exitCode=$process.ExitCode
+            output=(($stdout + [Environment]::NewLine + $stderr) -replace "`0", '').Trim()
+            timedOut=$false
+            error=$null
+            elapsedMs=$timer.ElapsedMilliseconds
+        }
+    }
+    catch {
+        $timer.Stop()
+        return [pscustomobject]@{
+            exitCode=$null; output=''; timedOut=$false
+            error=(ConvertTo-RedactedText $_.Exception.Message); elapsedMs=$timer.ElapsedMilliseconds
+        }
+    }
+    finally {
+        if ($null -ne $process) { $process.Dispose() }
+    }
+}
+
 function Get-WindowsPackageCatalog {
     [CmdletBinding()]
-    param()
+    param([ValidateRange(1, 300)][int]$TimeoutSeconds = 15)
 
     if (-not $IsWindows) {
         return [pscustomobject]@{ state='Unknown'; packages=@(); error='windows-host-required' }
@@ -317,14 +373,23 @@ function Get-WindowsPackageCatalog {
     }
     $temporaryPath = Join-Path ([System.IO.Path]::GetTempPath()) ("codex-dev-setup-winget-{0}.json" -f [guid]::NewGuid().ToString('N'))
     try {
-        $output = @(& $winget.Source export --output $temporaryPath --include-versions --accept-source-agreements --disable-interactivity 2>&1)
-        $exitCode = $LASTEXITCODE
+        $query = Invoke-SetupProcessCapture -FilePath $winget.Source -TimeoutSeconds $TimeoutSeconds -Arguments @(
+            'export', '--output', $temporaryPath, '--include-versions', '--accept-source-agreements', '--disable-interactivity'
+        )
         Write-SetupLog -Level Debug -Message 'WinGet 结构化软件包清单查询完成' -Data @{
-            exitCode=$exitCode
-            output=(ConvertTo-RedactedText (($output | ForEach-Object { [string]$_ }) -join "`n"))
+            exitCode=$query.exitCode
+            timedOut=$query.timedOut
+            elapsedMs=$query.elapsedMs
+            output=(ConvertTo-RedactedText $query.output)
         }
-        if ($exitCode -ne 0 -or -not (Test-Path -LiteralPath $temporaryPath -PathType Leaf)) {
-            return [pscustomobject]@{ state='Unknown'; packages=@(); error="winget-export-failed:$exitCode" }
+        if ($query.timedOut) {
+            return [pscustomobject]@{ state='Unknown'; packages=@(); error="winget-export-timeout:${TimeoutSeconds}s" }
+        }
+        if ($query.error) {
+            return [pscustomobject]@{ state='Unknown'; packages=@(); error="winget-export-error:$($query.error)" }
+        }
+        if ($query.exitCode -ne 0 -or -not (Test-Path -LiteralPath $temporaryPath -PathType Leaf)) {
+            return [pscustomobject]@{ state='Unknown'; packages=@(); error="winget-export-failed:$($query.exitCode)" }
         }
         try { $document = Get-Content -LiteralPath $temporaryPath -Raw -Encoding utf8 | ConvertFrom-Json -ErrorAction Stop }
         catch { return [pscustomobject]@{ state='Unknown'; packages=@(); error="winget-export-invalid-json:$($_.Exception.Message)" } }
@@ -372,7 +437,8 @@ function Get-WindowsPackageState {
     param(
         [Parameter(Mandatory)][string]$PackageId,
         [Parameter(Mandatory)][ValidateSet('winget', 'msstore')][string]$Source,
-        [AllowNull()]$Catalog
+        [AllowNull()]$Catalog,
+        [ValidateRange(1, 300)][int]$TimeoutSeconds = 10
     )
     if (-not $IsWindows) {
         return [pscustomobject]@{ state='Unknown'; installed=$false; version=$null; error='windows-host-required' }
@@ -381,28 +447,43 @@ function Get-WindowsPackageState {
     if (-not $winget) {
         return [pscustomobject]@{ state='Unknown'; installed=$false; version=$null; error='winget-command-not-found' }
     }
-    $output = @(& $winget.Source list --id $PackageId --exact --source $Source --accept-source-agreements --disable-interactivity 2>&1)
-    $exitCode = $LASTEXITCODE
+    if ($null -eq $Catalog) { $Catalog = Get-WindowsPackageCatalog -TimeoutSeconds $TimeoutSeconds }
+    $matches = @()
+    if ($Catalog.state -eq 'Known') {
+        $matches = @($Catalog.packages | Where-Object {
+            [string]::Equals([string]$_.id, $PackageId, [StringComparison]::OrdinalIgnoreCase) -and
+            [string]::Equals([string]$_.source, $Source, [StringComparison]::OrdinalIgnoreCase)
+        })
+        if ($matches.Count -eq 1 -and -not [string]::IsNullOrWhiteSpace([string]$matches[0].version)) {
+            return [pscustomobject]@{ state='KnownInstalled'; installed=$true; version=[string]$matches[0].version; error=$null }
+        }
+    }
+    $query = Invoke-SetupProcessCapture -FilePath $winget.Source -TimeoutSeconds $TimeoutSeconds -Arguments @(
+        'list', '--id', $PackageId, '--exact', '--source', $Source, '--accept-source-agreements', '--disable-interactivity'
+    )
     Write-SetupLog -Level Debug -Message 'WinGet 精确软件包查询完成' -Data @{
         packageId=$PackageId
         source=$Source
-        exitCode=$exitCode
-        output=(ConvertTo-RedactedText (($output | ForEach-Object { [string]$_ }) -join "`n"))
+        exitCode=$query.exitCode
+        timedOut=$query.timedOut
+        elapsedMs=$query.elapsedMs
+        output=(ConvertTo-RedactedText $query.output)
     }
-    if ($exitCode -eq -1978335212) {
+    if ($query.timedOut) {
+        return [pscustomobject]@{ state='Unknown'; installed=$false; version=$null; error="winget-list-timeout:${TimeoutSeconds}s" }
+    }
+    if ($query.error) {
+        return [pscustomobject]@{ state='Unknown'; installed=$false; version=$null; error="winget-list-error:$($query.error)" }
+    }
+    if ($query.exitCode -eq -1978335212) {
         return [pscustomobject]@{ state='KnownMissing'; installed=$false; version=$null; error=$null }
     }
-    if ($exitCode -ne 0) {
-        return [pscustomobject]@{ state='Unknown'; installed=$false; version=$null; error="winget-list-failed:$exitCode" }
+    if ($query.exitCode -ne 0) {
+        return [pscustomobject]@{ state='Unknown'; installed=$false; version=$null; error="winget-list-failed:$($query.exitCode)" }
     }
-    if ($null -eq $Catalog) { $Catalog = Get-WindowsPackageCatalog }
     if ($Catalog.state -ne 'Known') {
         return [pscustomobject]@{ state='Unknown'; installed=$false; version=$null; error=[string]$Catalog.error }
     }
-    $matches = @($Catalog.packages | Where-Object {
-        [string]::Equals([string]$_.id, $PackageId, [StringComparison]::OrdinalIgnoreCase) -and
-        [string]::Equals([string]$_.source, $Source, [StringComparison]::OrdinalIgnoreCase)
-    })
     if ($matches.Count -ne 1 -or [string]::IsNullOrWhiteSpace([string]$matches[0].version)) {
         return [pscustomobject]@{
             state='Unknown'

@@ -20,7 +20,7 @@
 - 检测必须区分 WSL 功能未启用、没有发行版、缺少目标发行版、目标 WSL2 就绪、WSL1 不受支持和状态未知；unknown 不得当成 missing。
 - 检测并规划 `wsl --update`、默认 WSL2 和发行版安装；修改后明确提示重启范围。检测到 WSL1 时停止，不执行自动转换。
 - `WslFirst` 的 Windows 侧只安装 Desktop、Terminal、UI 所需 Git/gh 与可选 Docker Desktop。
-- WinGet 安装状态必须由精确 package ID/source 查询的官方退出码判定，并用结构化清单绑定已安装版本；export 缺失不能当成未安装。PATH 命令只验证可执行能力，不能代替包身份。
+- WinGet 安装状态优先由结构化清单的精确 package ID/source 与版本确认；export 缺失不能当成未安装，必须再用精确查询的官方退出码复核。只查询当前配置需要的应用，每个只读 WinGet 子进程必须有超时上限。PATH 命令只验证可执行能力，不能代替包身份。
 - Desktop UI 状态没有可靠公开接口时，只提供人工步骤，不生成虚假自动检测结果。
 
 ## 阶段 2：唯一开发工具链

@@ -244,6 +244,44 @@ function Get-WindowsPackageDetection {
     }
 }
 
+function Get-RequiredWindowsPackageTargets {
+    param([Parameter(Mandatory)]$Config)
+
+    $targets = [System.Collections.Generic.List[object]]::new()
+    if ($Config.windows.installDesktop) {
+        $targets.Add([pscustomobject]@{ source='msstore'; id='9PLM9XGG6VKS'; label='Codex Desktop' })
+    }
+    if ($Config.windows.installTerminal) {
+        $targets.Add([pscustomobject]@{ source='winget'; id='Microsoft.WindowsTerminal'; label='Windows Terminal' })
+    }
+    if ($Config.windows.installUiGit) {
+        $targets.Add([pscustomobject]@{ source='winget'; id='Git.Git'; label='Git for Windows' })
+    }
+    if ($Config.windows.installGitHubCli) {
+        $targets.Add([pscustomobject]@{ source='winget'; id='GitHub.cli'; label='GitHub CLI' })
+    }
+    if ($Config.toolchains.docker.enabled -and $Config.toolchains.docker.provider -eq 'DockerDesktop') {
+        $targets.Add([pscustomobject]@{ source='winget'; id='Docker.DockerDesktop'; label='Docker Desktop' })
+    }
+    if ($Config.environmentMode -eq 'WindowsNative') {
+        foreach ($target in @(
+            @{ id='Microsoft.PowerShell'; label='PowerShell 7' },
+            @{ id='BurntSushi.ripgrep.MSVC'; label='ripgrep' },
+            @{ id='sharkdp.fd'; label='fd' },
+            @{ id='jqlang.jq'; label='jq' }
+        )) {
+            $targets.Add([pscustomobject]@{ source='winget'; id=$target.id; label=$target.label })
+        }
+        if ($Config.toolchains.node.enabled) {
+            $targets.Add([pscustomobject]@{ source='winget'; id='OpenJS.NodeJS.LTS'; label='Node.js LTS' })
+        }
+        if ($Config.toolchains.python.enabled) {
+            $targets.Add([pscustomobject]@{ source='winget'; id='astral-sh.uv'; label='uv' })
+        }
+    }
+    return @($targets)
+}
+
 function Get-WslFeatureInfo {
     $command = Get-Command Get-WindowsOptionalFeature -ErrorAction SilentlyContinue
     if (-not $command) {
@@ -938,22 +976,41 @@ function Get-CodexSetupDetection {
         "$windowsText；$permissionText"
     }
 
-    $apps = Invoke-DetectionStage -Index 2 -Name '检测 Codex Desktop 与 Terminal' -Issues $issues -Operation {
-        $catalog = Get-WindowsPackageCatalog
+    $apps = Invoke-DetectionStage -Index 2 -Name '检查 Windows 应用' -Issues $issues -Operation {
+        $targets = @(Get-RequiredWindowsPackageTargets -Config $Config)
+        Write-Host '      读取已安装应用（最长 15 秒）……' -ForegroundColor DarkGray
+        $catalog = Get-WindowsPackageCatalog -TimeoutSeconds 15
         $packageStates = [ordered]@{}
+        $timedOutSources = @{}
         if ($catalog.state -eq 'Known') {
-            foreach ($target in @(
-                @('winget', 'GitHub.cli'), @('winget', 'Microsoft.WindowsTerminal'), @('winget', 'Git.Git'),
-                @('msstore', '9PLM9XGG6VKS'), @('winget', 'Docker.DockerDesktop'), @('winget', 'Microsoft.PowerShell'),
-                @('winget', 'BurntSushi.ripgrep.MSVC'), @('winget', 'sharkdp.fd'), @('winget', 'jqlang.jq'),
-                @('winget', 'OpenJS.NodeJS.LTS'), @('winget', 'astral-sh.uv')
-            )) {
-                $packageStates["$($target[0])|$($target[1])"] = Get-WindowsPackageState -PackageId $target[1] -Source $target[0] -Catalog $catalog
+            for ($targetIndex = 0; $targetIndex -lt $targets.Count; $targetIndex++) {
+                $target = $targets[$targetIndex]
+                $key = "$($target.source)|$($target.id)"
+                Write-Host ("      核对 {0}/{1}：{2}……" -f ($targetIndex + 1), $targets.Count, $target.label) `
+                    -NoNewline -ForegroundColor DarkGray
+                if ($timedOutSources.ContainsKey($target.source)) {
+                    $state = [pscustomobject]@{
+                        state='Unknown'; installed=$false; version=$null
+                        error="winget-source-query-skipped-after-timeout:$($target.source)"
+                    }
+                }
+                else {
+                    $state = Get-WindowsPackageState -PackageId $target.id -Source $target.source -Catalog $catalog -TimeoutSeconds 10
+                    if ([string]$state.error -like 'winget-list-timeout:*') { $timedOutSources[$target.source] = $true }
+                }
+                $packageStates[$key] = $state
+                $stateText = switch ([string]$state.state) {
+                    'KnownInstalled' { '已安装' }
+                    'KnownMissing' { '未安装' }
+                    default { '暂时无法确认' }
+                }
+                Write-Host $stateText -ForegroundColor $(if ($state.state -eq 'Unknown') { 'Yellow' } else { 'DarkGray' })
             }
         }
         $catalog | Add-Member -NotePropertyName packageStates -NotePropertyValue ([pscustomobject]$packageStates) -Force
         [pscustomobject]@{
             catalog=$catalog
+            requiredPackages=$targets
             terminal=Get-WindowsPackageDetection -Catalog $catalog -PackageId 'Microsoft.WindowsTerminal' -Source winget
             codex=Get-WindowsPackageDetection -Catalog $catalog -PackageId '9PLM9XGG6VKS' -Source msstore
             terminalCommand=Get-CommandInfoSafe 'wt.exe' -SkipVersionProbe
@@ -962,24 +1019,23 @@ function Get-CodexSetupDetection {
         param($message)
         [pscustomobject]@{
             catalog=[pscustomobject]@{ state='Unknown'; complete=$false; packages=@(); packageStates=[pscustomobject]@{}; error=$message }
+            requiredPackages=@()
             terminal=[pscustomobject]@{ state='Unknown'; installed=$false; packageId='Microsoft.WindowsTerminal'; source='winget'; version=$null; name=$null; error=$message }
             codex=[pscustomobject]@{ state='Unknown'; installed=$false; packageId='9PLM9XGG6VKS'; source='msstore'; version=$null; name=$null; error=$message }
             terminalCommand=New-UnavailableCommandInfo -Error $message
         }
     } -ResultSummary {
         param($value)
-        $codexText = if ($value.codex.state -eq 'Unknown') {
-            '无法确认 Codex Desktop 包状态'
-        }
-        elseif ($value.codex.installed) { 'Codex Desktop 已安装' }
-        else { 'Codex Desktop 包未安装' }
-        $terminalText = if ($value.terminal.state -eq 'Unknown') {
-            '无法确认 Windows Terminal 包状态'
-        }
-        elseif ($value.terminal.installed) { 'Windows Terminal 已安装' }
-        elseif ($value.terminalCommand.installed) { 'Windows Terminal 包未登记，但 wt 命令可执行' }
-        else { 'Windows Terminal 包未安装' }
-        "$codexText；$terminalText"
+        $states = @($value.catalog.packageStates.PSObject.Properties | ForEach-Object Value)
+        $installedCount = @($states | Where-Object state -eq 'KnownInstalled').Count
+        $missingCount = @($states | Where-Object state -eq 'KnownMissing').Count
+        $unknownCount = @($states | Where-Object state -eq 'Unknown').Count
+        if ([string]$value.catalog.error -like 'winget-export-timeout:*') { return 'WinGet 响应超时；按 R 重试' }
+        if ([string]$value.catalog.error -eq 'winget-command-not-found') { return '未找到 WinGet；请修复 Microsoft App Installer' }
+        if ($value.catalog.state -ne 'Known') { return '已跳过应用核对；请检查 WinGet 状态后重试' }
+        if ($unknownCount -gt 0) { return "已确认 $($states.Count - $unknownCount)/$($states.Count) 项；$unknownCount 项待重试" }
+        if ($missingCount -gt 0) { return "$installedCount 项已安装；$missingCount 项待设置" }
+        return "$installedCount 项所需应用已安装"
     }
 
     $tools = Invoke-DetectionStage -Index 3 -Name '检测 Windows 侧组件与 PATH' -Issues $issues -Operation {

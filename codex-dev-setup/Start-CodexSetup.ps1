@@ -73,36 +73,32 @@ function Show-Banner {
     try { Clear-Host -ErrorAction Stop } catch { }
     Write-Host 'Codex 开发环境助手' -ForegroundColor Cyan
     $modeText = if ($Config.environmentMode -eq 'WslFirst') { "WSL2 $($Config.wsl.distribution)" } else { 'Windows Native' }
-    Write-Host "检查并准备单一开发环境：$modeText" -ForegroundColor White
+    Write-Host "目标环境：$modeText  ·  v$scriptVersion" -ForegroundColor White
     Write-Host ('=' * 72) -ForegroundColor DarkGray
-    Write-Host '先检查，再决定是否设置；不会读取你的密码或密钥，也不会自动移动项目。' -ForegroundColor Yellow
-    Write-Host "版本 $scriptVersion" -ForegroundColor DarkGray
     Write-Host ''
 }
 
 function Show-MainMenu {
     param([Parameter(Mandatory)]$Config)
-    Write-Host '你想做什么？'
-    Write-Host '  [1] 先检查我的电脑（推荐）' -ForegroundColor Green
-    Write-Host '      不会改动任何设置，也不会启动 WSL/Linux'
-    Write-Host '  [2] 开始设置开发环境'
-    Write-Host '      先完整检查，再由你逐项确认要做的改动'
-    Write-Host '  [3] 为项目准备基础配置文件'
-    Write-Host '      选择一个项目文件夹；已有文件不会被直接覆盖'
-    Write-Host '  [4] 导出当前设置到文件'
-    Write-Host '      方便在另一台电脑上复用相同选择'
-    Write-Host '  [5] 撤销上一次由本工具做出的设置'
-    Write-Host '      先展示范围，再恢复文件、删除本次新建文件并尝试卸载本次安装的软件'
-    Write-Host '  [6] 查看 Codex Desktop 的使用建议'
-    Write-Host '      查看当前开发环境对应的 Desktop 设置和重启验收步骤'
+    Write-Host '请选择操作'
+    Write-Host '  [1] 检查开发环境（推荐）' -ForegroundColor Green
+    Write-Host '      检查 Windows、Codex Desktop、Terminal 和 WSL 状态'
+    Write-Host '  [2] 设置开发环境'
+    Write-Host '      查找缺失项并引导完成设置'
+    Write-Host '  [3] 初始化项目配置'
+    Write-Host '      为指定项目生成基础配置'
+    Write-Host '  [4] 导出设置'
+    Write-Host '      保存当前选择，供其他电脑复用'
+    Write-Host '  [5] 撤销上次设置'
+    Write-Host '      查看并恢复本工具上一次更改'
+    Write-Host '  [6] Codex Desktop 设置指南'
+    Write-Host '      查看 Desktop 设置和重启验收步骤'
     if ($Config.environmentMode -eq 'WslFirst') {
-        Write-Host '  [7] 深入检查 WSL/Linux 开发环境'
-        Write-Host '      会启动目标 Ubuntu 做只读检查，不会修改设置'
+        Write-Host '  [7] 完整检查 WSL 环境'
+        Write-Host '      启动 Ubuntu 并检查 Linux 工具链'
     }
-    Write-Host '  [R] 重新检查（忽略刚才的结果）'
+    Write-Host '  [R] 刷新检测结果'
     Write-Host '  [0] 退出'
-    Write-Host ''
-    Write-Host '小提示：不确定时直接按 Enter，先进行安全检查。' -ForegroundColor DarkGray
 }
 
 function Open-CodexSettingsGuide {
@@ -593,7 +589,7 @@ try {
         while ($true) {
             Show-Banner -Config $config
             Show-MainMenu -Config $config
-            $selection = Read-Host '输入编号（直接按 Enter 先检查）'
+            $selection = Read-Host '请选择 [默认 1]'
             if ([string]::IsNullOrWhiteSpace($selection)) { $selection = '1' }
             $selection = $selection.Trim().ToUpperInvariant()
             $completionShown = $false

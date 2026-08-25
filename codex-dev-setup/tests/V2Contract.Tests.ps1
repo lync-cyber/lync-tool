@@ -108,6 +108,21 @@ $commonModule = Get-Module 'CodexSetup.Common'
 $validatedConfig = Read-SetupConfig -Path $configPath
 Assert-True ($validatedConfig.schemaVersion -eq 2) 'The strict config reader rejected the default contract.'
 
+$pwshPath = Join-Path $PSHOME $(if ($IsWindows) { 'pwsh.exe' } else { 'pwsh' })
+$captureResult = & $commonModule {
+    param($Executable)
+    Invoke-SetupProcessCapture -FilePath $Executable -Arguments @('-NoProfile', '-Command', "[Console]::Out.Write('ready')") -TimeoutSeconds 5
+} $pwshPath
+Assert-True (-not $captureResult.timedOut -and $captureResult.exitCode -eq 0 -and $captureResult.output -eq 'ready') `
+    'Bounded process capture did not return successful output.'
+$timeoutResult = & $commonModule {
+    param($Executable)
+    Invoke-SetupProcessCapture -FilePath $Executable -Arguments @('-NoProfile', '-Command', 'Start-Sleep -Seconds 5') -TimeoutSeconds 1
+} $pwshPath
+Assert-True ($timeoutResult.timedOut -and $null -eq $timeoutResult.exitCode -and $timeoutResult.error -eq 'timeout:1s') `
+    'Bounded process capture did not terminate a stalled child process.'
+Write-Host 'PASS: external read-only queries have a process timeout'
+
 $unknownConfig = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
 $unknownConfig | Add-Member -NotePropertyName legacyCompatibility -NotePropertyValue $true
 Assert-Throws { Assert-SetupConfiguration -Config $unknownConfig } 'Unknown root fields must be rejected.'
@@ -121,6 +136,13 @@ Write-Host 'PASS: strict v2 configuration validation'
 
 Import-Module (Join-Path $root 'modules/CodexSetup.Detection.psm1') -Force
 $detectionModule = Get-Module 'CodexSetup.Detection'
+$wslPackageTargets = & $detectionModule {
+    param($Config)
+    @(Get-RequiredWindowsPackageTargets -Config $Config)
+} $validatedConfig
+Assert-True ($wslPackageTargets.Count -eq 4) 'WslFirst detection queries packages that are not required by its configuration.'
+Assert-True ('Microsoft.PowerShell' -notin @($wslPackageTargets.id)) 'WslFirst detection queries WindowsNative toolchain packages.'
+Write-Host 'PASS: package detection is limited to configured Windows applications'
 $acceptedWslPath = & $detectionModule {
     Get-ProjectRecommendation -ProjectPath '\\wsl$\Ubuntu-24.04\home\alice\code\repo' `
         -ConfiguredEnvironmentMode WslFirst -WslProjects '~/code' -WslDistribution 'Ubuntu-24.04'
@@ -618,6 +640,18 @@ Write-Host 'PASS: strict rollback v3 preview, tamper safety, interruption, retry
 
 $entryPath = Join-Path $root 'Start-CodexSetup.ps1'
 $entryText = Get-Content -LiteralPath $entryPath -Raw
+foreach ($removedCopy in @(
+    '不会读取你的密码或密钥',
+    '也不会自动移动项目',
+    '已有文件不会被直接覆盖',
+    '小提示：不确定时'
+)) {
+    Assert-True (-not $entryText.Contains($removedCopy)) "Low-value wizard copy remains: $removedCopy"
+}
+foreach ($requiredCopy in @('检查开发环境（推荐）', '查找缺失项并引导完成设置', '请选择 [默认 1]')) {
+    Assert-True $entryText.Contains($requiredCopy) "Task-oriented wizard copy is missing: $requiredCopy"
+}
+Write-Host 'PASS: wizard copy exposes tasks and outcomes'
 $projectInitBlock = [regex]::Match(
     $entryText,
     '(?s)if \(\$WorkflowMode -eq ''ProjectInit''\) \{.*?\}\s*Show-CodexSetupPlan'

@@ -320,6 +320,18 @@ fi
 if "$RG_BIN" -n -- 'winget(\.exe)?[[:space:]]+list|ChatGPT\|OpenAI' "$acceptance_script" modules >/dev/null; then
   fail "Windows package detection parses a table or uses a broad identity"
 fi
+"$RG_BIN" -Fq 'Invoke-SetupProcessCapture' modules/CodexSetup.Common.psm1 || fail "WinGet detection lacks a bounded process runner"
+"$RG_BIN" -Fq 'winget-export-timeout' modules/CodexSetup.Common.psm1 || fail "WinGet catalog detection lacks timeout handling"
+"$RG_BIN" -Fq 'winget-source-query-skipped-after-timeout' modules/CodexSetup.Detection.psm1 || \
+  fail "WinGet detection repeats queries after a source timeout"
+for removed_copy in \
+  '不会读取你的密码或密钥' \
+  '也不会自动移动项目' \
+  '小提示：不确定时'; do
+  if "$RG_BIN" -Fq "$removed_copy" Start-CodexSetup.ps1; then
+    fail "low-value wizard copy remains: $removed_copy"
+  fi
+done
 "$RG_BIN" -Fq '[string]$ResultJsonPath' Start-CodexSetup.ps1 || fail "Start entry point lacks -ResultJsonPath"
 for marker in 'detection = $WorkflowResult.detection' 'plan = $WorkflowResult.plan' 'results = @($WorkflowResult.results)' 'remainingPlan = $WorkflowResult.remainingPlan'; do
   "$RG_BIN" -Fq "$marker" Start-CodexSetup.ps1 || fail "machine result lacks $marker"
