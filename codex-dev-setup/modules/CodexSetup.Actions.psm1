@@ -2,8 +2,9 @@ Set-StrictMode -Version Latest
 
 function Get-ActionProperty {
     param($InputObject, [Parameter(Mandatory)][string]$Name, $Default = $null)
-    if ($null -ne $InputObject -and $InputObject.PSObject.Properties.Name -contains $Name) {
-        return $InputObject.$Name
+    if ($null -ne $InputObject) {
+        $property = $InputObject.PSObject.Properties[$Name]
+        if ($null -ne $property) { return $property.Value }
     }
     return $Default
 }
@@ -104,7 +105,8 @@ function Install-WingetPackage {
     $arguments += '--exact'
     $arguments += @('--accept-source-agreements', '--accept-package-agreements', '--disable-interactivity', '--silent')
     Invoke-ExternalSetupCommand -Command 'winget.exe' -Arguments $arguments | Out-Null
-    $installed = Get-WindowsPackageState -PackageId $packageId -Source $source
+    $installedCatalog = Get-WindowsPackageCatalog
+    $installed = Get-WindowsPackageState -PackageId $packageId -Source $source -Catalog $installedCatalog
     if ($installed.installed) {
         Register-InstalledPackage -Id $packageId -Source $source -Version ([string]$installed.version)
         return New-ActionOutcome -Status Changed -Summary '安装完成并已复核' -Data @{ installedVersion=$installed.version }
@@ -117,7 +119,8 @@ function Test-WingetPackageUpgrade {
     param([Parameter(Mandatory)]$Action)
     $packageId = [string]$Action.parameters.packageId
     $source = [string]$Action.parameters.source
-    $installed = Get-WindowsPackageState -PackageId $packageId -Source $source
+    $installedCatalog = Get-WindowsPackageCatalog
+    $installed = Get-WindowsPackageState -PackageId $packageId -Source $source -Catalog $installedCatalog
     if ($installed.state -eq 'Unknown') {
         return New-ActionOutcome -Status NeedsAttention -Summary '无法读取结构化软件包清单；未执行升级' -Data @{ currentVersion=$null; availableVersion=$null }
     }
@@ -150,13 +153,15 @@ function Set-WslDefaultVersion2 {
     $registryPath = 'Registry::HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Lxss'
     $before = try {
         $item = Get-ItemProperty -LiteralPath $registryPath -ErrorAction Stop
-        if ($item.PSObject.Properties.Name -contains 'DefaultVersion') { [int]$item.DefaultVersion } else { 2 }
+        $defaultVersion = $item.PSObject.Properties['DefaultVersion']
+        if ($null -ne $defaultVersion) { [int]$defaultVersion.Value } else { 2 }
     }
     catch [System.Management.Automation.ItemNotFoundException] { 2 }
     catch { $null }
     Invoke-ExternalSetupCommand -Command 'wsl.exe' -Arguments @('--set-default-version', '2') | Out-Null
     $itemAfter = Get-ItemProperty -LiteralPath $registryPath -ErrorAction Stop
-    $after = if ($itemAfter.PSObject.Properties.Name -contains 'DefaultVersion') { [int]$itemAfter.DefaultVersion } else { 2 }
+    $afterVersion = $itemAfter.PSObject.Properties['DefaultVersion']
+    $after = if ($null -ne $afterVersion) { [int]$afterVersion.Value } else { 2 }
     if ($after -ne 2) { throw '设置命令结束后，WSL 默认版本仍不是 2。' }
     $status = if ($null -ne $before -and $before -eq 2) { 'NoChange' } else { 'Changed' }
     New-ActionOutcome -Status $status -Summary $(if ($status -eq 'Changed') { '新发行版默认版本已改为 WSL2' } else { '新发行版已经默认使用 WSL2' }) -Data @{ before=$before; after=$after }
@@ -554,7 +559,7 @@ function Get-DeclaredProjectCommands {
         $scripts = Get-ActionProperty $packageJson 'scripts'
         if ($manager -and $null -ne $scripts) {
             foreach ($name in @('dev', 'test', 'lint', 'check', 'format', 'typecheck', 'build')) {
-                if ($scripts.PSObject.Properties.Name -contains $name) {
+                if ($null -ne $scripts.PSObject.Properties[$name]) {
                     Add-DeclaredProjectCommand -Commands $commands -Label ((Get-Culture).TextInfo.ToTitleCase($name)) -Command "$manager run $name"
                 }
             }
@@ -812,9 +817,9 @@ function Read-ValidatedRollbackManifest {
         'files', 'installedPackages', 'notes'
     )
     foreach ($field in $manifestFields) {
-        if ($manifest.PSObject.Properties.Name -notcontains $field) { throw "回滚清单缺少 v3 字段：$field。" }
+        if ($null -eq $manifest.PSObject.Properties[$field]) { throw "回滚清单缺少 v3 字段：$field。" }
     }
-    $unknownManifestFields = @($manifest.PSObject.Properties.Name | Where-Object { $_ -notin $manifestFields })
+    $unknownManifestFields = @($manifest.PSObject.Properties | ForEach-Object { $_.Name } | Where-Object { $_ -notin $manifestFields })
     if ($unknownManifestFields.Count -gt 0) { throw "回滚清单包含不支持的字段：$($unknownManifestFields -join '、')。" }
     if (($manifest.schemaVersion -isnot [int] -and $manifest.schemaVersion -isnot [long]) -or
         $manifest.schemaVersion -ne 3 -or [string]$manifest.runId -ne (Split-Path -Leaf $runRoot)) {
@@ -866,9 +871,9 @@ function Read-ValidatedRollbackManifest {
         }
         if (-not $seenPaths.Add([System.IO.Path]::GetFullPath([string]$file.path))) { throw "回滚清单包含重复目标：$($file.path)" }
         foreach ($field in $fileFields) {
-            if ($file.PSObject.Properties.Name -notcontains $field) { throw "文件回滚记录缺少字段 $field：$($file.path)" }
+            if ($null -eq $file.PSObject.Properties[$field]) { throw "文件回滚记录缺少字段 $field：$($file.path)" }
         }
-        if (@($file.PSObject.Properties.Name | Where-Object { $_ -notin $fileFields }).Count -gt 0) {
+        if (@($file.PSObject.Properties | ForEach-Object { $_.Name } | Where-Object { $_ -notin $fileFields }).Count -gt 0) {
             throw "文件回滚记录包含不支持的字段：$($file.path)"
         }
         if ($file.existed -isnot [bool]) { throw "回滚清单 existed 字段无效：$($file.path)" }
@@ -931,9 +936,9 @@ function Read-ValidatedRollbackManifest {
     foreach ($package in $installedPackages) {
         $packageFields = @('id', 'source', 'installedVersion', 'rollbackStatus', 'rollbackError')
         foreach ($field in $packageFields) {
-            if ($package.PSObject.Properties.Name -notcontains $field) { throw "软件包回滚记录缺少字段 $field。" }
+            if ($null -eq $package.PSObject.Properties[$field]) { throw "软件包回滚记录缺少字段 $field。" }
         }
-        if (@($package.PSObject.Properties.Name | Where-Object { $_ -notin $packageFields }).Count -gt 0) {
+        if (@($package.PSObject.Properties | ForEach-Object { $_.Name } | Where-Object { $_ -notin $packageFields }).Count -gt 0) {
             throw '软件包回滚记录包含不支持的字段。'
         }
         if (-not (Test-ManagedWindowsPackage -Id ([string]$package.id) -Source ([string]$package.source)) -or
@@ -1122,7 +1127,8 @@ function Invoke-CodexSetupRollback {
                 Write-RollbackManifestAtomic -Path $manifest.path -Manifest $manifest.raw
                 continue
             }
-            $currentPackage = Get-WindowsPackageState -PackageId ([string]$package.id) -Source ([string]$package.source)
+            $currentCatalog = Get-WindowsPackageCatalog
+            $currentPackage = Get-WindowsPackageState -PackageId ([string]$package.id) -Source ([string]$package.source) -Catalog $currentCatalog
             if ($currentPackage.state -eq 'Unknown') { throw "卸载前无法再次确认软件包状态：$($currentPackage.error)" }
             if (-not $currentPackage.installed) {
                 $package.rollbackStatus = 'NoChange'

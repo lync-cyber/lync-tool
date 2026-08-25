@@ -73,7 +73,7 @@ Windows 专属项目使用 Windows native `elevated` sandbox 默认值。它与 
 
 真实机验收使用可续跑的阶段状态，而不是一条跨重启的长命令。Preflight 记录 Windows、WinGet、WSL、受管文件和 Desktop 进程基线；Apply 与 PostRestart 保存结构化工作流结果；DesktopEvidence 依次验证两个负向组合和最终 WSL/WSL 组合，只接受人工设置截图、完整进程替换以及绑定 RunId、通道和本轮 nonce 的独立 JSON 环境检查。真实回滚后必须先记录人工 GUI 基线恢复，再重新 Apply；需要时再次完成 WSL shutdown/restart，最后重新提交 WSL/WSL 双通道证据。
 
-WinGet 先用结构化 export 读取已安装应用及版本；已有精确 package ID/source 匹配的项直接确认为已安装。export 中没有某项仍不能证明它未安装，此时再使用精确 package ID/source 的 `list` 退出码复核；除明确的 `NO_APPLICATIONS_FOUND` 外，查询失败一律保持 unknown 并阻止自动安装。只查询当前配置需要的 Windows 应用；所有只读 WinGet 子进程都有超时上限，某个软件源超时后跳过本轮同源后续查询。PATH 与 Appx 命令只用于安装后的运行能力复核。WSL 状态机只接受 WSL2；WSL1 是不受支持状态，不存在转换或兼容分支。
+快速检测只对当前配置需要的 Windows 应用执行精确 package ID/source `list`，仅使用官方退出码判断已安装、未安装或 unknown，不解析面向人的表格，也不为展示版本而扫描整机应用。升级检查、安装后回滚登记和卸载前防漂移需要版本证据时，才读取结构化 export；export 缺失不能证明未安装，仍由精确查询退出码复核。所有只读 WinGet 子进程都有超时上限，某个软件源超时后跳过本轮同源后续查询。PATH 与 Appx 命令只用于安装后的运行能力复核。WSL 状态机只接受 WSL2；WSL1 是不受支持状态，不存在转换或兼容分支。
 
 ## 可回滚范围
 

@@ -136,6 +136,10 @@ Write-Host 'PASS: strict v2 configuration validation'
 
 Import-Module (Join-Path $root 'modules/CodexSetup.Detection.psm1') -Force
 $detectionModule = Get-Module 'CodexSetup.Detection'
+$emptyDetectionProperty = & $detectionModule {
+    Get-DetectionProperty -InputObject ([pscustomobject]@{}) -Names @('missing') -Default 'fallback'
+}
+Assert-True ($emptyDetectionProperty -eq 'fallback') 'Detection property lookup throws for an empty object under strict mode.'
 $wslPackageTargets = & $detectionModule {
     param($Config)
     @(Get-RequiredWindowsPackageTargets -Config $Config)
@@ -156,6 +160,11 @@ Assert-True ($rejectedWslPath.locationCompatible -eq $false) 'A WSL path outside
 Write-Host 'PASS: WslFirst project boundary is limited to ~/code'
 
 Import-Module (Join-Path $root 'modules/CodexSetup.Planning.psm1') -Force
+$planningModule = Get-Module 'CodexSetup.Planning'
+$emptyPlanningProperty = & $planningModule {
+    Get-PlanningProperty -InputObject ([pscustomobject]@{}) -Name 'missing' -Default 'fallback'
+}
+Assert-True ($emptyPlanningProperty -eq 'fallback') 'Planning property lookup throws for an empty object under strict mode.'
 $missingTool = [pscustomobject]@{ installed=$false; version=''; path='' }
 $knownMissingPackage = [pscustomobject]@{ state='KnownMissing'; installed=$false; version=$null; error=$null }
 $packageStates = [pscustomobject][ordered]@{
@@ -244,11 +253,27 @@ Assert-True (@($missingIdentityPlan.actions | Where-Object { $_.type -eq 'Winget
 $unknownCatalogDetection = $catalogDetection | ConvertTo-Json -Depth 20 | ConvertFrom-Json
 $unknownCatalogDetection.windowsPackageCatalog.state = 'Unknown'
 $unknownCatalogDetection.windowsPackageCatalog.error = 'fixture-query-failed'
+$unknownCatalogDetection.windowsPackageCatalog.packageStates = [pscustomobject]@{}
 $unknownCatalogPlan = Get-CodexSetupPlan -Detection $unknownCatalogDetection -Config $validatedConfig -ProjectPath $null
 Assert-True (@($unknownCatalogPlan.actions | Where-Object type -eq 'WingetInstall').Count -eq 0) `
     'An unknown WinGet catalog must fail closed without install actions.'
 Assert-True (@($unknownCatalogPlan.warnings | Where-Object { $_ -match '状态未知|可信' }).Count -gt 0) `
     'An unknown WinGet catalog must produce an actionable warning.'
+
+$emptyCatalogDetection = $catalogDetection | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+$emptyCatalogDetection.windowsPackageCatalog = [pscustomobject]@{
+    state='Unknown'
+    complete=$false
+    packages=@()
+    packageStates=[pscustomobject]@{}
+    error='winget-list-timeout:10s'
+}
+$emptyCatalogPlan = Get-CodexSetupPlan -Detection $emptyCatalogDetection -Config $validatedConfig -ProjectPath $null
+Assert-True (@($emptyCatalogPlan.actions | Where-Object type -eq 'WingetInstall').Count -eq 0) `
+    'An empty timed-out package state map must fail closed without throwing or installing.'
+Assert-True (@($emptyCatalogPlan.warnings | Where-Object { $_ -match 'WinGet 响应超时' }).Count -gt 0) `
+    'An empty timed-out package state map must retain the actionable timeout reason.'
+Write-Host 'PASS: empty strict-mode package states degrade without a fatal property error'
 
 foreach ($case in @(
     @{ State='FeatureDisabled'; Required='InstallWslDistribution'; Forbidden=@('ConfigureWsl') }
@@ -274,8 +299,19 @@ foreach ($case in @(
 }
 Write-Host 'PASS: exact WinGet identity and fail-closed WSL2 lifecycle contracts'
 
+Import-Module (Join-Path $root 'modules/CodexSetup.Reporting.psm1') -Force
+$reportingModule = Get-Module 'CodexSetup.Reporting'
+$emptyReportProperty = & $reportingModule {
+    Get-ReportProperty -InputObject ([pscustomobject]@{}) -Name 'missing' -Default 'fallback'
+}
+Assert-True ($emptyReportProperty -eq 'fallback') 'Report property lookup throws for an empty object under strict mode.'
+
 Import-Module (Join-Path $root 'modules/CodexSetup.Actions.psm1') -Force
 $actionsModule = Get-Module 'CodexSetup.Actions'
+$emptyActionProperty = & $actionsModule {
+    Get-ActionProperty -InputObject ([pscustomobject]@{}) -Name 'missing' -Default 'fallback'
+}
+Assert-True ($emptyActionProperty -eq 'fallback') 'Action property lookup throws for an empty object under strict mode.'
 $fixtureRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("codex-dev-setup-v2-{0}" -f [guid]::NewGuid().ToString('N'))
 try {
     $nodeProject = Join-Path $fixtureRoot 'node'

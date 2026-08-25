@@ -2,8 +2,9 @@ Set-StrictMode -Version Latest
 
 function Get-PlanningProperty {
     param($InputObject, [Parameter(Mandatory)][string]$Name, $Default = $null)
-    if ($null -ne $InputObject -and $InputObject.PSObject.Properties.Name -contains $Name) {
-        return $InputObject.$Name
+    if ($null -ne $InputObject) {
+        $property = $InputObject.PSObject.Properties[$Name]
+        if ($null -ne $property) { return $property.Value }
     }
     return $Default
 }
@@ -58,11 +59,10 @@ function Get-PlannedWindowsPackageDetection {
         [Parameter(Mandatory)][string]$PackageId,
         [Parameter(Mandatory)][ValidateSet('winget', 'msstore')][string]$Source
     )
-    $catalogState = [string](Get-PlanningProperty $Catalog 'state' 'Unknown')
     $packageStates = Get-PlanningProperty $Catalog 'packageStates'
     $key = "$Source|$PackageId"
     $state = Get-PlanningProperty $packageStates $key
-    if ($catalogState -ne 'Known' -or $null -eq $state) {
+    if ($null -eq $state) {
         $catalogError = [string](Get-PlanningProperty $Catalog 'error' '')
         return [pscustomobject]@{
             state='Unknown'; installed=$false; version=$null

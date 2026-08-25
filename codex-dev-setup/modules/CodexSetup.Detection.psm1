@@ -214,8 +214,9 @@ function Get-DetectionProperty {
     )
     if ($null -eq $InputObject) { return $Default }
     foreach ($name in $Names) {
-        if ($InputObject.PSObject.Properties.Name -contains $name) {
-            return $InputObject.$name
+        $property = $InputObject.PSObject.Properties[$name]
+        if ($null -ne $property) {
+            return $property.Value
         }
     }
     return $Default
@@ -227,11 +228,10 @@ function Get-WindowsPackageDetection {
         [Parameter(Mandatory)][string]$PackageId,
         [Parameter(Mandatory)][ValidateSet('winget', 'msstore')][string]$Source
     )
-    $catalogState = [string](Get-DetectionProperty $Catalog @('state') 'Unknown')
     $packageStates = Get-DetectionProperty $Catalog @('packageStates')
     $key = "$Source|$PackageId"
     $state = Get-DetectionProperty $packageStates @($key)
-    if ($catalogState -ne 'Known' -or $null -eq $state) {
+    if ($null -eq $state) {
         $catalogError = [string](Get-DetectionProperty $Catalog @('error') '')
         $state = [pscustomobject]@{
             state='Unknown'; installed=$false; version=$null
@@ -301,7 +301,7 @@ function Get-WslDefaultVersion {
     $registryPath = 'Registry::HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Lxss'
     try {
         $item = Get-ItemProperty -LiteralPath $registryPath -ErrorAction Stop
-        if ($item.PSObject.Properties.Name -notcontains 'DefaultVersion') { return 2 }
+        if ($null -eq $item.PSObject.Properties['DefaultVersion']) { return 2 }
         $value = $item.DefaultVersion
         if ([int]$value -notin @(1, 2)) { return $null }
         return [int]$value
@@ -978,36 +978,42 @@ function Get-CodexSetupDetection {
 
     $apps = Invoke-DetectionStage -Index 2 -Name '检查 Windows 应用' -Issues $issues -Operation {
         $targets = @(Get-RequiredWindowsPackageTargets -Config $Config)
-        Write-Host '      读取已安装应用（最长 15 秒）……' -ForegroundColor DarkGray
-        $catalog = Get-WindowsPackageCatalog -TimeoutSeconds 15
+        Write-Host '      仅核对当前配置需要的应用（每项最长 10 秒）……' -ForegroundColor DarkGray
         $packageStates = [ordered]@{}
         $timedOutSources = @{}
-        if ($catalog.state -eq 'Known') {
-            for ($targetIndex = 0; $targetIndex -lt $targets.Count; $targetIndex++) {
-                $target = $targets[$targetIndex]
-                $key = "$($target.source)|$($target.id)"
-                Write-Host ("      核对 {0}/{1}：{2}……" -f ($targetIndex + 1), $targets.Count, $target.label) `
-                    -NoNewline -ForegroundColor DarkGray
-                if ($timedOutSources.ContainsKey($target.source)) {
-                    $state = [pscustomobject]@{
-                        state='Unknown'; installed=$false; version=$null
-                        error="winget-source-query-skipped-after-timeout:$($target.source)"
-                    }
+        for ($targetIndex = 0; $targetIndex -lt $targets.Count; $targetIndex++) {
+            $target = $targets[$targetIndex]
+            $key = "$($target.source)|$($target.id)"
+            Write-Host ("      核对 {0}/{1}：{2}……" -f ($targetIndex + 1), $targets.Count, $target.label) `
+                -NoNewline -ForegroundColor DarkGray
+            if ($timedOutSources.ContainsKey($target.source)) {
+                $state = [pscustomobject]@{
+                    state='Unknown'; installed=$false; version=$null
+                    error="winget-source-query-skipped-after-timeout:$($target.source)"
                 }
-                else {
-                    $state = Get-WindowsPackageState -PackageId $target.id -Source $target.source -Catalog $catalog -TimeoutSeconds 10
-                    if ([string]$state.error -like 'winget-list-timeout:*') { $timedOutSources[$target.source] = $true }
-                }
-                $packageStates[$key] = $state
-                $stateText = switch ([string]$state.state) {
-                    'KnownInstalled' { '已安装' }
-                    'KnownMissing' { '未安装' }
-                    default { '暂时无法确认' }
-                }
-                Write-Host $stateText -ForegroundColor $(if ($state.state -eq 'Unknown') { 'Yellow' } else { 'DarkGray' })
             }
+            else {
+                $state = Get-WindowsPackageState -PackageId $target.id -Source $target.source -TimeoutSeconds 10
+                if ([string]$state.error -like 'winget-list-timeout:*') { $timedOutSources[$target.source] = $true }
+            }
+            $packageStates[$key] = $state
+            $stateText = switch ([string]$state.state) {
+                'KnownInstalled' { '已安装' }
+                'KnownMissing' { '未安装' }
+                default { '暂时无法确认' }
+            }
+            Write-Host $stateText -ForegroundColor $(if ($state.state -eq 'Unknown') { 'Yellow' } else { 'DarkGray' })
         }
-        $catalog | Add-Member -NotePropertyName packageStates -NotePropertyValue ([pscustomobject]$packageStates) -Force
+        $states = @($packageStates.Values)
+        $unknownStates = @($states | Where-Object state -eq 'Unknown')
+        $catalogError = @($unknownStates.error | Where-Object { $_ } | Select-Object -Unique) -join '; '
+        $catalog = [pscustomobject]@{
+            state=$(if ($unknownStates.Count -eq 0) { 'Known' } elseif ($unknownStates.Count -eq $states.Count) { 'Unknown' } else { 'Partial' })
+            complete=$false
+            packages=@()
+            packageStates=[pscustomobject]$packageStates
+            error=$(if ($catalogError) { $catalogError } else { $null })
+        }
         [pscustomobject]@{
             catalog=$catalog
             requiredPackages=$targets
@@ -1030,9 +1036,7 @@ function Get-CodexSetupDetection {
         $installedCount = @($states | Where-Object state -eq 'KnownInstalled').Count
         $missingCount = @($states | Where-Object state -eq 'KnownMissing').Count
         $unknownCount = @($states | Where-Object state -eq 'Unknown').Count
-        if ([string]$value.catalog.error -like 'winget-export-timeout:*') { return 'WinGet 响应超时；按 R 重试' }
         if ([string]$value.catalog.error -eq 'winget-command-not-found') { return '未找到 WinGet；请修复 Microsoft App Installer' }
-        if ($value.catalog.state -ne 'Known') { return '已跳过应用核对；请检查 WinGet 状态后重试' }
         if ($unknownCount -gt 0) { return "已确认 $($states.Count - $unknownCount)/$($states.Count) 项；$unknownCount 项待重试" }
         if ($missingCount -gt 0) { return "$installedCount 项已安装；$missingCount 项待设置" }
         return "$installedCount 项所需应用已安装"

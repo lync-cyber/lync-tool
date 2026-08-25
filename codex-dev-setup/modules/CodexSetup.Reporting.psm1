@@ -2,8 +2,9 @@ Set-StrictMode -Version Latest
 
 function Get-ReportProperty {
     param($InputObject, [Parameter(Mandatory)][string]$Name, $Default = $null)
-    if ($null -ne $InputObject -and $InputObject.PSObject.Properties.Name -contains $Name) {
-        return $InputObject.$Name
+    if ($null -ne $InputObject) {
+        $property = $InputObject.PSObject.Properties[$Name]
+        if ($null -ne $property) { return $property.Value }
     }
     return $Default
 }

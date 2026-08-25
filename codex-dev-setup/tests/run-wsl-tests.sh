@@ -322,6 +322,16 @@ if "$RG_BIN" -n -- 'winget(\.exe)?[[:space:]]+list|ChatGPT\|OpenAI' "$acceptance
 fi
 "$RG_BIN" -Fq 'Invoke-SetupProcessCapture' modules/CodexSetup.Common.psm1 || fail "WinGet detection lacks a bounded process runner"
 "$RG_BIN" -Fq 'winget-export-timeout' modules/CodexSetup.Common.psm1 || fail "WinGet catalog detection lacks timeout handling"
+if "$RG_BIN" -Fq 'Get-WindowsPackageCatalog' modules/CodexSetup.Detection.psm1; then
+  fail "Fast Windows application detection still scans the full WinGet export catalog"
+fi
+if awk '/^function Get-WindowsPackageState /,/^function ConvertTo-RedactedText /' modules/CodexSetup.Common.psm1 | \
+    "$RG_BIN" -Fq 'Get-WindowsPackageCatalog'; then
+  fail "Exact WinGet state queries still trigger a full export implicitly"
+fi
+if "$RG_BIN" -n 'PSObject\.Properties\.Name[[:space:]]+-(contains|notcontains)' modules >/dev/null; then
+  fail "Strict-mode-unsafe property existence checks remain"
+fi
 "$RG_BIN" -Fq 'winget-source-query-skipped-after-timeout' modules/CodexSetup.Detection.psm1 || \
   fail "WinGet detection repeats queries after a source timeout"
 for removed_copy in \

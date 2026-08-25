@@ -279,7 +279,8 @@ function Assert-RollbackManifestAuthentication {
         [Parameter(Mandatory)]$Manifest
     )
     foreach ($field in @('hostBinding', 'userBinding', 'manifestHmac')) {
-        if ($Manifest.PSObject.Properties.Name -notcontains $field -or [string]$Manifest.$field -notmatch '^[a-f0-9]{64}$') {
+        $property = $Manifest.PSObject.Properties[$field]
+        if ($null -eq $property -or [string]$property.Value -notmatch '^[a-f0-9]{64}$') {
             throw "回滚清单缺少有效认证字段：$field。"
         }
     }
@@ -393,17 +394,25 @@ function Get-WindowsPackageCatalog {
         }
         try { $document = Get-Content -LiteralPath $temporaryPath -Raw -Encoding utf8 | ConvertFrom-Json -ErrorAction Stop }
         catch { return [pscustomobject]@{ state='Unknown'; packages=@(); error="winget-export-invalid-json:$($_.Exception.Message)" } }
-        if ($null -eq $document -or $document.PSObject.Properties.Name -notcontains 'Sources') {
+        if ($null -eq $document -or $null -eq $document.PSObject.Properties['Sources']) {
             return [pscustomobject]@{ state='Unknown'; packages=@(); error='winget-export-missing-sources' }
         }
 
         $packages = [System.Collections.Generic.List[object]]::new()
         foreach ($sourceEntry in @($document.Sources)) {
-            $details = $sourceEntry.SourceDetails
+            if ($null -eq $sourceEntry) {
+                return [pscustomobject]@{ state='Unknown'; packages=@(); error='winget-export-invalid-source-entry' }
+            }
+            $detailsProperty = $sourceEntry.PSObject.Properties['SourceDetails']
+            $packagesProperty = $sourceEntry.PSObject.Properties['Packages']
+            if ($null -eq $detailsProperty -or $null -eq $detailsProperty.Value -or $null -eq $packagesProperty) {
+                return [pscustomobject]@{ state='Unknown'; packages=@(); error='winget-export-invalid-source-entry' }
+            }
+            $details = $detailsProperty.Value
             $sourceCandidates = @(
-                [string]$details.Name
-                [string]$details.Identifier
-                [string]$details.Argument
+                [string]$(if ($null -ne $details.PSObject.Properties['Name']) { $details.PSObject.Properties['Name'].Value })
+                [string]$(if ($null -ne $details.PSObject.Properties['Identifier']) { $details.PSObject.Properties['Identifier'].Value })
+                [string]$(if ($null -ne $details.PSObject.Properties['Argument']) { $details.PSObject.Properties['Argument'].Value })
             ) -join '|'
             $source = if ($sourceCandidates -match '(?i)(^|\|)msstore(\||$)|storeedgefd') {
                 'msstore'
@@ -413,11 +422,19 @@ function Get-WindowsPackageCatalog {
             }
             else { $null }
             if (-not $source) { continue }
-            foreach ($package in @($sourceEntry.Packages)) {
-                $id = [string]$package.PackageIdentifier
-                if ([string]::IsNullOrWhiteSpace($id)) { continue }
-                $name = if ($package.PSObject.Properties.Name -contains 'PackageName') { [string]$package.PackageName } else { $null }
-                $version = if ($package.PSObject.Properties.Name -contains 'Version') { [string]$package.Version } else { $null }
+            foreach ($package in @($packagesProperty.Value)) {
+                if ($null -eq $package) {
+                    return [pscustomobject]@{ state='Unknown'; packages=@(); error='winget-export-invalid-package-entry' }
+                }
+                $idProperty = $package.PSObject.Properties['PackageIdentifier']
+                $id = if ($null -ne $idProperty) { [string]$idProperty.Value } else { '' }
+                if ([string]::IsNullOrWhiteSpace($id)) {
+                    return [pscustomobject]@{ state='Unknown'; packages=@(); error='winget-export-invalid-package-entry' }
+                }
+                $nameProperty = $package.PSObject.Properties['PackageName']
+                $versionProperty = $package.PSObject.Properties['Version']
+                $name = if ($null -ne $nameProperty) { [string]$nameProperty.Value } else { $null }
+                $version = if ($null -ne $versionProperty) { [string]$versionProperty.Value } else { $null }
                 $packages.Add([pscustomobject]@{ id=$id; source=$source; version=$version; name=$name })
             }
         }
@@ -447,9 +464,8 @@ function Get-WindowsPackageState {
     if (-not $winget) {
         return [pscustomobject]@{ state='Unknown'; installed=$false; version=$null; error='winget-command-not-found' }
     }
-    if ($null -eq $Catalog) { $Catalog = Get-WindowsPackageCatalog -TimeoutSeconds $TimeoutSeconds }
     $matches = @()
-    if ($Catalog.state -eq 'Known') {
+    if ($null -ne $Catalog -and $Catalog.state -eq 'Known') {
         $matches = @($Catalog.packages | Where-Object {
             [string]::Equals([string]$_.id, $PackageId, [StringComparison]::OrdinalIgnoreCase) -and
             [string]::Equals([string]$_.source, $Source, [StringComparison]::OrdinalIgnoreCase)
@@ -480,6 +496,9 @@ function Get-WindowsPackageState {
     }
     if ($query.exitCode -ne 0) {
         return [pscustomobject]@{ state='Unknown'; installed=$false; version=$null; error="winget-list-failed:$($query.exitCode)" }
+    }
+    if ($null -eq $Catalog) {
+        return [pscustomobject]@{ state='KnownInstalled'; installed=$true; version=$null; error=$null }
     }
     if ($Catalog.state -ne 'Known') {
         return [pscustomobject]@{ state='Unknown'; installed=$false; version=$null; error=[string]$Catalog.error }
@@ -697,7 +716,7 @@ function Assert-SetupObjectShape {
     if ($null -eq $Value -or $Value -isnot [pscustomobject]) {
         throw "$Path 必须是 JSON 对象。"
     }
-    $actual = @($Value.PSObject.Properties.Name)
+    $actual = @($Value.PSObject.Properties | ForEach-Object { $_.Name })
     foreach ($name in $Required) {
         if ($name -notin $actual) { throw "$Path 缺少必填字段 $name。" }
     }
@@ -798,7 +817,8 @@ function Assert-SetupConfiguration {
             throw "WSL 命令别名无效：$($alias.Name)=$($alias.Value)。"
         }
     }
-    if ($Config.wsl.aliases.PSObject.Properties.Name -notcontains 'fd' -or [string]$Config.wsl.aliases.fd -ne 'fdfind') {
+    $fdAlias = $Config.wsl.aliases.PSObject.Properties['fd']
+    if ($null -eq $fdAlias -or [string]$fdAlias.Value -ne 'fdfind') {
         throw 'wsl.aliases 必须包含 fd=fdfind。'
     }
 
