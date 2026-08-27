@@ -34,12 +34,31 @@ def main():
     state_path = root / "state.json"
     if not raw.exists() or not brief.exists(): raise SystemExit("workspace missing raw_listings.json or search_brief.json; run init_workspace.py first")
     if not source_plan.exists():
-        save_json(source_plan, {"version": 1, "coverage_policy": {"min_terminal_attempts_by_role": {"primary_discovery": 2, "verification": 1, "benchmark": 2}, "min_high_priority_terminal_attempts": 1, "max_single_platform_share_warning": 0.65}, "sources": [], "migration_note": "Created by run_pipeline; complete before final delivery."})
+        save_json(source_plan, {"version": 1, "coverage_policy": {"min_terminal_attempts_by_role": {"primary_discovery": 2, "verification": 1, "benchmark": 2}, "min_high_priority_terminal_attempts": 1, "required_primary_source_keys": ["beike", "lianjia"], "stop_on_required_source_problem": True, "max_single_platform_share_warning": 0.65}, "sources": [], "migration_note": "Created by run_pipeline; complete Beike and Lianjia separately before continuing."})
     if not collection_log.exists():
         save_json(collection_log, {"version": 1, "created_at": now_iso(), "last_updated_at": now_iso(), "coverage_policy": {"min_pages_per_nonterminal_run": 2, "min_pages_per_primary_source": 3, "min_comparison_areas": 2, "min_project_lookups": 3, "saturation_low_novelty_pages": 2, "saturation_novelty_threshold": 0.10, "hard_cap_min_pages": 5, "require_search_evidence": True, "preferred_area_share_warning": 0.80}, "search_runs": [], "migration_note": "Created by run_pipeline; record browser search depth before final delivery."})
     py = sys.executable
     brief_qa_code = run([py, scripts/"validate_brief.py", brief, "-o", brief_qa, "--strict"], allow_nonzero=True)
     source_qa_code = run([py, scripts/"validate_source_coverage.py", source_plan, raw, "-o", source_qa, "--strict"], allow_nonzero=True)
+    source_report = load_json(source_qa, {}) or {}
+    required_gate_codes = {
+        "required_source_missing", "required_source_wrong_role_or_priority",
+        "required_source_access_blocked", "required_source_not_completed",
+    }
+    required_gate_issues = [x for x in source_report.get("issues", []) if x.get("code") in required_gate_codes]
+    if required_gate_issues:
+        state = load_json(state_path, {})
+        waiting = [x for x in required_gate_issues if x.get("code") == "required_source_access_blocked"]
+        state.update({
+            "last_updated_at": now_iso(),
+            "workflow_status": "waiting_for_user_intervention" if waiting else "required_sources_incomplete",
+            "source_qa_path": str(source_qa),
+            "report_maturity": "discovery_draft",
+            "next_actions": ["Complete Beike and Lianjia separately in the visible browser; do not collect from substitute platforms or generate a report."],
+        })
+        save_json(state_path, state)
+        print("required_source_gate=blocked; pipeline stopped before collection QA, scoring, and HTML generation")
+        raise SystemExit(2)
     collection_qa_code = run([py, scripts/"validate_collection_coverage.py", collection_log, raw, brief, "-o", collection_qa, "--source-plan", source_plan, "--strict"], allow_nonzero=True)
     run([py, scripts/"normalize_listings.py", raw, "-o", normalized])
     run([py, scripts/"dataset_profile.py", normalized, "-o", profile, "--engine", args.engine, "--source-registry", skill/"references/source-registry.json"])

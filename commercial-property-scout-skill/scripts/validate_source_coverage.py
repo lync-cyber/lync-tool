@@ -6,8 +6,9 @@ from collections import Counter
 
 from _common import clean_text, load_json, platform_key, save_json
 
-TERMINAL_ATTEMPTS = {"completed_with_results", "completed_zero_results", "access_limited", "unavailable"}
-BLOCKED = {"blocked_login", "blocked_captcha"}
+TERMINAL_ATTEMPTS = {"completed_with_results", "completed_zero_results"}
+BLOCKED = {"blocked_login", "blocked_captcha", "access_limited", "unavailable"}
+DEFAULT_REQUIRED_PRIMARY_SOURCES = ("beike", "lianjia")
 
 
 def add(issues, severity, code, source_key=None, detail=""):
@@ -29,6 +30,36 @@ def main():
     issues = []
 
     by_key = {clean_text(x.get("source_key")): x for x in sources if clean_text(x.get("source_key"))}
+    configured_required = policy.get("required_primary_source_keys")
+    required_keys = list(dict.fromkeys(
+        clean_text(x) for x in [*DEFAULT_REQUIRED_PRIMARY_SOURCES, *(configured_required or [])] if clean_text(x)
+    ))
+    waiver_rows = [x for x in plan.get("required_source_waivers", []) if isinstance(x, dict)]
+    waivers = {
+        clean_text(x.get("source_key")): x
+        for x in waiver_rows
+        if x.get("user_authorized_waiver") is True and clean_text(x.get("user_quote"))
+    }
+    required_status = {}
+    for key in required_keys:
+        if key in waivers:
+            required_status[key] = "user_waived"
+            add(issues, "warning", "required_source_user_waived", key, clean_text(waivers[key].get("user_quote")))
+            continue
+        source = by_key.get(key)
+        if not source:
+            required_status[key] = "missing"
+            add(issues, "blocker", "required_source_missing", key)
+            continue
+        status = clean_text(source.get("status")) or "planned"
+        required_status[key] = status
+        if clean_text(source.get("role")) != "primary_discovery" or clean_text(source.get("priority")) != "critical":
+            add(issues, "blocker", "required_source_wrong_role_or_priority", key, "must be critical primary_discovery")
+        if status in BLOCKED:
+            add(issues, "blocker", "required_source_access_blocked", key, status)
+        elif status not in TERMINAL_ATTEMPTS:
+            add(issues, "blocker", "required_source_not_completed", key, status)
+
     completed_by_role = Counter()
     high_priority_terminal = 0
     for source in sources:
@@ -42,13 +73,8 @@ def main():
                 high_priority_terminal += 1
         if priority in {"critical", "high"} and status not in TERMINAL_ATTEMPTS and status not in BLOCKED:
             add(issues, "blocker", "high_priority_source_not_attempted", key)
-        if status in BLOCKED:
-            substitute = clean_text(source.get("substitute_key"))
-            replacement = by_key.get(substitute)
-            if not substitute or not replacement or clean_text(replacement.get("status")) not in TERMINAL_ATTEMPTS:
-                add(issues, "blocker", "blocked_source_without_completed_substitute", key, status)
-            else:
-                add(issues, "warning", "source_blocked_but_substituted", key, status)
+        if status in BLOCKED and key not in required_keys and priority in {"critical", "high"}:
+            add(issues, "blocker", "high_priority_source_blocked_requires_user_intervention", key, status)
         if status in {"unavailable", "skipped_with_reason", "access_limited"} and not clean_text(source.get("status_reason")):
             add(issues, "warning", "source_status_missing_reason", key, status)
         if status == "completed_with_results" and source.get("result_count") in (None, 0):
@@ -85,6 +111,8 @@ def main():
             "listing_count": len(listings),
             "terminal_attempts_by_role": dict(completed_by_role),
             "high_priority_terminal_attempts": high_priority_terminal,
+            "required_primary_source_status": required_status,
+            "waiting_for_user_intervention": any(x["code"] == "required_source_access_blocked" for x in issues),
             "counts_by_platform": dict(platform_counts.most_common()),
             "max_single_platform_share": round(max_share, 4),
             "blockers": counts.get("blocker", 0),

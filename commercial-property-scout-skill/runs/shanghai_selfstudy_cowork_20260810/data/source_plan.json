@@ -1,0 +1,155 @@
+{
+  "version": 1,
+  "created_at": "2026-08-10T20:54:11+08:00",
+  "last_updated_at": "2026-08-10T22:24:51+08:00",
+  "market_context": {
+    "city": "上海",
+    "asset_type": "写字楼/商铺",
+    "transaction_type": "rent"
+  },
+  "coverage_policy": {
+    "min_terminal_attempts_by_role": {
+      "primary_discovery": 2,
+      "verification": 1,
+      "benchmark": 2
+    },
+    "min_high_priority_terminal_attempts": 1,
+    "required_primary_source_keys": [
+      "beike",
+      "lianjia"
+    ],
+    "stop_on_required_source_problem": true,
+    "max_single_platform_share_warning": 0.65
+  },
+  "sources": [
+    {
+      "source_key": "beike",
+      "display_name": "贝壳",
+      "role": "primary_discovery",
+      "priority": "critical",
+      "status": "completed_with_results",
+      "url": "https://shangye.ke.com/sh/xzl_rent.html",
+      "status_reason": "已完成全市基线、浦江镇、8号线、普陀、徐汇及3个项目反查通道；共保留188条唯一广告，详情字段转入后续交叉核验",
+      "result_count": 188,
+      "created_at": "2026-08-10T20:54:11+08:00",
+      "updated_at": "2026-08-10T21:23:24+08:00",
+      "substitute_key": ""
+    },
+    {
+      "source_key": "lianjia",
+      "display_name": "链家",
+      "role": "primary_discovery",
+      "priority": "critical",
+      "status": "skipped_with_reason",
+      "url": "https://shangye.lianjia.com/sh",
+      "status_reason": "用户明确授权：贝壳和链家是同一平台，贝壳筛选完成后可跳过链家，从后续其它平台进行交叉验证和补充",
+      "result_count": 0,
+      "created_at": "2026-08-10T20:54:11+08:00",
+      "updated_at": "2026-08-10T21:23:28+08:00",
+      "substitute_key": ""
+    },
+    {
+      "source_key": "official_project",
+      "display_name": "项目/业主/物业官方",
+      "role": "verification",
+      "priority": "high",
+      "status": "completed_with_results",
+      "url": "https://static.sse.com.cn/bond/bridge2/disclosure/announcement/c/202504/e7e166_20250428_VIX2.pdf",
+      "status_reason": "上交所官方披露文件确认海洋石油大厦的资产所有人、零陵路583号地址、办公用途和出租状态；仅为项目级核验",
+      "result_count": 1,
+      "created_at": "2026-08-10T20:58:00+08:00",
+      "updated_at": "2026-08-10T22:24:51+08:00",
+      "substitute_key": ""
+    },
+    {
+      "source_key": "jll",
+      "display_name": "JLL",
+      "role": "benchmark",
+      "priority": "high",
+      "status": "completed_zero_results",
+      "url": "https://www.jll.com.cn/zh-cn/insights",
+      "status_reason": "面向JLL官方域名检索2026年上海办公市场基准，未取得可直接引用的匹配页面；未用于价格结论",
+      "result_count": 0,
+      "created_at": "2026-08-10T20:58:00+08:00",
+      "updated_at": "2026-08-10T21:31:21+08:00",
+      "substitute_key": ""
+    },
+    {
+      "source_key": "cbre",
+      "display_name": "CBRE",
+      "role": "benchmark",
+      "priority": "high",
+      "status": "completed_with_results",
+      "url": "https://www.cbre.com.cn/press-releases/q1-2026-shanghai-mv",
+      "status_reason": "2026年第一季度上海优质办公楼及商务园区报价与有效租金基准，并以Q2报告校验市场仍在扩张去化",
+      "result_count": 2,
+      "created_at": "2026-08-10T20:58:00+08:00",
+      "updated_at": "2026-08-10T21:31:16+08:00",
+      "substitute_key": ""
+    },
+    {
+      "source_key": "fang",
+      "display_name": "房天下",
+      "role": "primary_discovery",
+      "priority": "normal",
+      "status": "access_limited",
+      "url": "https://check.3g.fang.com/check.html?backurl=https%3A%2F%2Foffice.fang.com%2Fsh%2Fzu%2Fhouse%2F",
+      "status_reason": "可见浏览器直访上海写字楼出租入口后被重定向至站点校验页，未出现正常列表；截图已保存",
+      "result_count": 0,
+      "created_at": "2026-08-10T20:58:00+08:00",
+      "updated_at": "2026-08-10T21:25:33+08:00",
+      "substitute_key": ""
+    },
+    {
+      "source_key": "anjuke",
+      "display_name": "安居客",
+      "role": "broad_discovery",
+      "priority": "low",
+      "status": "completed_with_results",
+      "url": "https://sh.sydc.anjuke.com/xzl-zu/",
+      "status_reason": "已完成6个高潜项目名反查，保留7条适用广告；无独立交叉证据时仅作补充线索",
+      "result_count": 7,
+      "created_at": "2026-08-10T20:58:00+08:00",
+      "updated_at": "2026-08-10T21:30:18+08:00",
+      "substitute_key": ""
+    },
+    {
+      "source_key": "colliers",
+      "created_at": "2026-08-10T21:31:09+08:00",
+      "display_name": "Colliers",
+      "role": "benchmark",
+      "priority": "high",
+      "status": "completed_with_results",
+      "url": "https://www.colliers.com.cn/zh-cn/research/20260625shanghaioffice",
+      "status_reason": "2026年第二季度上海甲级写字楼市场基准，披露全市平均租金及次中心价格带",
+      "result_count": 1,
+      "substitute_key": "",
+      "updated_at": "2026-08-10T21:31:09+08:00"
+    },
+    {
+      "source_key": "lezu",
+      "created_at": "2026-08-10T22:24:51+08:00",
+      "display_name": "乐租办公",
+      "role": "broad_discovery",
+      "priority": "normal",
+      "status": "completed_with_results",
+      "url": "https://www.lezubangong.com/loupan/l729",
+      "status_reason": "可见页面复核由谷科技产业园13个在租广告、面积与租金带、24小时独立空调及江月路站项目级描述；物业费仍空缺",
+      "result_count": 13,
+      "substitute_key": "",
+      "updated_at": "2026-08-10T22:24:51+08:00"
+    }
+  ],
+  "required_source_waivers": [
+    {
+      "source_key": "lianjia",
+      "user_authorized_waiver": true,
+      "user_quote": "贝壳和链家是同一平台，贝壳筛选完成后可跳过链家，从后续其它平台进行交叉验证和补充",
+      "recorded_at": "2026-08-10T21:24:00+08:00"
+    }
+  ],
+  "selection_notes": [
+    "Complete Beike and Lianjia separately before visiting any other listing platform. Only an explicit user waiver may skip either required source.",
+    "The user explicitly waived Lianjia after Beike collection and directed the task to continue with other platforms for cross-verification and supplementation."
+  ]
+}

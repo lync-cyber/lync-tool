@@ -1,0 +1,12 @@
+{
+  "checked_at": "2026-08-10T22:32:29+08:00",
+  "html": "runs/shanghai_selfstudy_cowork_20260810/shanghai_office_shortlist_20260810.html",
+  "parser": "lxml",
+  "summary": {
+    "blockers": 0,
+    "warnings": 0,
+    "info": 0,
+    "valid_for_delivery": true
+  },
+  "issues": []
+}

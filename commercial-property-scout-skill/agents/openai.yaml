@@ -1,6 +1,6 @@
 interface:
   display_name: "商业地产房源侦察"
   short_description: "多页覆盖、区域对照、项目反查与综合成本决策报告"
-  default_prompt: "使用 $commercial-property-scout 确认需求后执行多来源多页搜索、区域外对照和重点项目反查，再生成带覆盖审计、证据与综合成本的商业房源决策报告。"
+  default_prompt: "使用 $commercial-property-scout 确认需求后，先分别完成贝壳与链家两个必查主源；任一网站受限时停止并等待我介入，恢复后再做其他来源、区域对照、项目反查和决策报告。"
 policy:
   allow_implicit_invocation: true
