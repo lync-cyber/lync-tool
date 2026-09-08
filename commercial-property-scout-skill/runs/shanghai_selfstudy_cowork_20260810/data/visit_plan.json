@@ -1,0 +1,2145 @@
+{
+  "start_location": "",
+  "transport_mode": "public_transit",
+  "sessions": [
+    {
+      "session": 1,
+      "area": "浦江镇",
+      "suggested_slot": "half_day",
+      "reservation_status": "to_confirm",
+      "stops": [
+        {
+          "order": 1,
+          "property_id": "prop_81f15523cb74",
+          "project_name": "由谷产业园",
+          "address": "上海市闵行区立跃路2795号（项目级交叉来源）",
+          "decision_score": 71.7,
+          "verification_level": "V1",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 2,
+          "property_id": "prop_93603a92f160",
+          "project_name": "由谷产业园",
+          "address": "上海市闵行区立跃路2795号（项目级交叉来源）",
+          "decision_score": 71.7,
+          "verification_level": "V1",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 3,
+          "property_id": "prop_03a1887abc08",
+          "project_name": "万科VMO花园广场",
+          "address": "",
+          "decision_score": 67.9,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 4,
+          "property_id": "prop_1a6dc8bb02db",
+          "project_name": "乐工坊",
+          "address": "",
+          "decision_score": 67.9,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 5,
+          "property_id": "prop_c15e08895a34",
+          "project_name": "乐工坊",
+          "address": "",
+          "decision_score": 67.9,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        }
+      ],
+      "routing_note": "No complete coordinates: grouped by submarket/district and ranked by decision score; verify actual transit order with a map before departure."
+    },
+    {
+      "session": 2,
+      "area": "徐汇",
+      "suggested_slot": "half_day",
+      "reservation_status": "to_confirm",
+      "stops": [
+        {
+          "order": 1,
+          "property_id": "prop_c7d49fe1f195",
+          "project_name": "海洋石油大厦",
+          "address": "",
+          "decision_score": 67.4,
+          "verification_level": "V2",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 2,
+          "property_id": "prop_f5a68e2d5669",
+          "project_name": "光大会展中心",
+          "address": "上海市徐汇区漕宝路66号（项目级交叉来源）",
+          "decision_score": 65.1,
+          "verification_level": "V1",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 3,
+          "property_id": "prop_e49ef917ac28",
+          "project_name": "上海实业大厦",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 4,
+          "property_id": "prop_43add3e10ac2",
+          "project_name": "光启城",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 5,
+          "property_id": "prop_70d092bc74df",
+          "project_name": "光启城",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        }
+      ],
+      "routing_note": "No complete coordinates: grouped by submarket/district and ranked by decision score; verify actual transit order with a map before departure."
+    },
+    {
+      "session": 3,
+      "area": "徐汇",
+      "suggested_slot": "half_day",
+      "reservation_status": "to_confirm",
+      "stops": [
+        {
+          "order": 1,
+          "property_id": "prop_065609912c83",
+          "project_name": "光启城",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 2,
+          "property_id": "prop_dea29dad5556",
+          "project_name": "光大会展中心",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 3,
+          "property_id": "prop_4a44b8782d8c",
+          "project_name": "凤凰园",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 4,
+          "property_id": "prop_1755de4984bb",
+          "project_name": "凤凰园",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 5,
+          "property_id": "prop_a6c680fc3eb5",
+          "project_name": "华鑫中心",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        }
+      ],
+      "routing_note": "No complete coordinates: grouped by submarket/district and ranked by decision score; verify actual transit order with a map before departure."
+    },
+    {
+      "session": 4,
+      "area": "徐汇",
+      "suggested_slot": "half_day",
+      "reservation_status": "to_confirm",
+      "stops": [
+        {
+          "order": 1,
+          "property_id": "prop_792d3e30c65e",
+          "project_name": "嘉汇国际广场",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 2,
+          "property_id": "prop_1a62e6a32ad3",
+          "project_name": "圣爱大厦",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 3,
+          "property_id": "prop_9517fd923324",
+          "project_name": "圣爱大厦",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 4,
+          "property_id": "prop_879990b0fe73",
+          "project_name": "新业大楼",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 5,
+          "property_id": "prop_2e7b770af3a3",
+          "project_name": "桂果园",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        }
+      ],
+      "routing_note": "No complete coordinates: grouped by submarket/district and ranked by decision score; verify actual transit order with a map before departure."
+    },
+    {
+      "session": 5,
+      "area": "徐汇",
+      "suggested_slot": "half_day",
+      "reservation_status": "to_confirm",
+      "stops": [
+        {
+          "order": 1,
+          "property_id": "prop_5b3b3ffcd54f",
+          "project_name": "桂果园",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 2,
+          "property_id": "prop_5198827af66a",
+          "project_name": "桂果园",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 3,
+          "property_id": "prop_607a7e46d8a2",
+          "project_name": "森联商务楼",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 4,
+          "property_id": "prop_9d5422c52e13",
+          "project_name": "森联商务楼",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 5,
+          "property_id": "prop_61ca3dcee34d",
+          "project_name": "永升大厦",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        }
+      ],
+      "routing_note": "No complete coordinates: grouped by submarket/district and ranked by decision score; verify actual transit order with a map before departure."
+    },
+    {
+      "session": 6,
+      "area": "徐汇",
+      "suggested_slot": "half_day",
+      "reservation_status": "to_confirm",
+      "stops": [
+        {
+          "order": 1,
+          "property_id": "prop_81dabc43fd95",
+          "project_name": "永升大厦",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 2,
+          "property_id": "prop_f84eadda12be",
+          "project_name": "永升大厦",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 3,
+          "property_id": "prop_9c863afaaeed",
+          "project_name": "汇京国际广场",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 4,
+          "property_id": "prop_dd31ef9b7619",
+          "project_name": "海洋石油大厦",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 5,
+          "property_id": "prop_bc92c977d052",
+          "project_name": "海洋石油大厦",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        }
+      ],
+      "routing_note": "No complete coordinates: grouped by submarket/district and ranked by decision score; verify actual transit order with a map before departure."
+    },
+    {
+      "session": 7,
+      "area": "徐汇",
+      "suggested_slot": "half_day",
+      "reservation_status": "to_confirm",
+      "stops": [
+        {
+          "order": 1,
+          "property_id": "prop_877efbabca92",
+          "project_name": "百丽国际广场",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 2,
+          "property_id": "prop_bca86c3dbc97",
+          "project_name": "绿地汇中心",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 3,
+          "property_id": "prop_f06c10fc8edf",
+          "project_name": "蒲汇塘路158号",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 4,
+          "property_id": "prop_554eae5cfe6c",
+          "project_name": "虹梅商务大厦",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 5,
+          "property_id": "prop_8909265bf744",
+          "project_name": "飞洲国际广场",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        }
+      ],
+      "routing_note": "No complete coordinates: grouped by submarket/district and ranked by decision score; verify actual transit order with a map before departure."
+    },
+    {
+      "session": 8,
+      "area": "徐汇",
+      "suggested_slot": "half_day",
+      "reservation_status": "to_confirm",
+      "stops": [
+        {
+          "order": 1,
+          "property_id": "prop_3a9f034aeef7",
+          "project_name": "飞雕国际大厦",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 2,
+          "property_id": "prop_90abe3e54637",
+          "project_name": "宝石园",
+          "address": "",
+          "decision_score": 62.1,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": [
+            "price_lightly_below_comparables"
+          ]
+        },
+        {
+          "order": 3,
+          "property_id": "prop_da78210bb23f",
+          "project_name": "新汇园",
+          "address": "",
+          "decision_score": 62.1,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": [
+            "price_lightly_below_comparables"
+          ]
+        },
+        {
+          "order": 4,
+          "property_id": "prop_7d7a424e7e16",
+          "project_name": "飞雕国际大厦",
+          "address": "",
+          "decision_score": 62.1,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": [
+            "price_lightly_below_comparables"
+          ]
+        },
+        {
+          "order": 5,
+          "property_id": "prop_27f4f890a030",
+          "project_name": "新汇园",
+          "address": "",
+          "decision_score": 60.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": [
+            "price_materially_below_comparables"
+          ]
+        }
+      ],
+      "routing_note": "No complete coordinates: grouped by submarket/district and ranked by decision score; verify actual transit order with a map before departure."
+    },
+    {
+      "session": 9,
+      "area": "徐汇",
+      "suggested_slot": "half_day",
+      "reservation_status": "to_confirm",
+      "stops": [
+        {
+          "order": 1,
+          "property_id": "prop_d5c6f9506da5",
+          "project_name": "桂果园",
+          "address": "",
+          "decision_score": 60.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": [
+            "price_materially_below_comparables"
+          ]
+        },
+        {
+          "order": 2,
+          "property_id": "prop_057e121ecb1d",
+          "project_name": "钦江园",
+          "address": "",
+          "decision_score": 60.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": [
+            "price_materially_below_comparables"
+          ]
+        },
+        {
+          "order": 3,
+          "property_id": "prop_8db5a4478e65",
+          "project_name": "飞雕国际大厦",
+          "address": "",
+          "decision_score": 57.9,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": [
+            "price_extremely_below_comparables_requires_explanation"
+          ]
+        },
+        {
+          "order": 4,
+          "property_id": "prop_142ffd4d2812",
+          "project_name": "光大会展中心",
+          "address": "",
+          "decision_score": 56.9,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 5,
+          "property_id": "prop_6d78912ae7a2",
+          "project_name": "光大会展中心",
+          "address": "",
+          "decision_score": 52.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        }
+      ],
+      "routing_note": "No complete coordinates: grouped by submarket/district and ranked by decision score; verify actual transit order with a map before departure."
+    },
+    {
+      "session": 10,
+      "area": "徐汇",
+      "suggested_slot": "half_day",
+      "reservation_status": "to_confirm",
+      "stops": [
+        {
+          "order": 1,
+          "property_id": "prop_d25e5ec3dc64",
+          "project_name": "海洋石油大厦",
+          "address": "",
+          "decision_score": 52.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        }
+      ],
+      "routing_note": "No complete coordinates: grouped by submarket/district and ranked by decision score; verify actual transit order with a map before departure."
+    },
+    {
+      "session": 11,
+      "area": "浦东",
+      "suggested_slot": "half_day",
+      "reservation_status": "to_confirm",
+      "stops": [
+        {
+          "order": 1,
+          "property_id": "prop_3f13276ab652",
+          "project_name": "BHC中环中心",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 2,
+          "property_id": "prop_aaf48f602084",
+          "project_name": "中企未来世纪大厦",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 3,
+          "property_id": "prop_bceabac2e38d",
+          "project_name": "华融大厦",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 4,
+          "property_id": "prop_171a34678ce9",
+          "project_name": "复地万科活力城",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 5,
+          "property_id": "prop_b2b6ee107e63",
+          "project_name": "复地万科活力城",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        }
+      ],
+      "routing_note": "No complete coordinates: grouped by submarket/district and ranked by decision score; verify actual transit order with a map before departure."
+    },
+    {
+      "session": 12,
+      "area": "浦东",
+      "suggested_slot": "half_day",
+      "reservation_status": "to_confirm",
+      "stops": [
+        {
+          "order": 1,
+          "property_id": "prop_0d3d2c2a1123",
+          "project_name": "振华企业广场",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 2,
+          "property_id": "prop_9e563f2aa2c5",
+          "project_name": "振华企业广场",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 3,
+          "property_id": "prop_02dc9e31b298",
+          "project_name": "智慧谷",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 4,
+          "property_id": "prop_0873e83d5eb8",
+          "project_name": "智慧谷",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 5,
+          "property_id": "prop_9a404d304244",
+          "project_name": "智慧谷",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        }
+      ],
+      "routing_note": "No complete coordinates: grouped by submarket/district and ranked by decision score; verify actual transit order with a map before departure."
+    },
+    {
+      "session": 13,
+      "area": "浦东",
+      "suggested_slot": "half_day",
+      "reservation_status": "to_confirm",
+      "stops": [
+        {
+          "order": 1,
+          "property_id": "prop_dd554fd12cd9",
+          "project_name": "智慧谷",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 2,
+          "property_id": "prop_cd53c86e162a",
+          "project_name": "智慧谷",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 3,
+          "property_id": "prop_cf32becc9486",
+          "project_name": "智慧谷",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 4,
+          "property_id": "prop_6a800cbe86c4",
+          "project_name": "汇商大厦",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 5,
+          "property_id": "prop_ada0c04a9c28",
+          "project_name": "生命人寿大厦",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        }
+      ],
+      "routing_note": "No complete coordinates: grouped by submarket/district and ranked by decision score; verify actual transit order with a map before departure."
+    },
+    {
+      "session": 14,
+      "area": "浦东",
+      "suggested_slot": "half_day",
+      "reservation_status": "to_confirm",
+      "stops": [
+        {
+          "order": 1,
+          "property_id": "prop_b020e5e74440",
+          "project_name": "裕安大厦",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 2,
+          "property_id": "prop_135edf129497",
+          "project_name": "BHC中环中心",
+          "address": "",
+          "decision_score": 62.1,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": [
+            "price_lightly_below_comparables"
+          ]
+        },
+        {
+          "order": 3,
+          "property_id": "prop_238291e312b0",
+          "project_name": "由由燕乔大厦",
+          "address": "",
+          "decision_score": 62.1,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": [
+            "price_lightly_below_comparables"
+          ]
+        },
+        {
+          "order": 4,
+          "property_id": "prop_8cb7615abec6",
+          "project_name": "由由燕乔大厦",
+          "address": "",
+          "decision_score": 62.1,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": [
+            "price_lightly_below_comparables"
+          ]
+        },
+        {
+          "order": 5,
+          "property_id": "prop_d0c7472764e5",
+          "project_name": "BHC中环中心",
+          "address": "",
+          "decision_score": 60.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": [
+            "price_materially_below_comparables"
+          ]
+        }
+      ],
+      "routing_note": "No complete coordinates: grouped by submarket/district and ranked by decision score; verify actual transit order with a map before departure."
+    },
+    {
+      "session": 15,
+      "area": "浦东",
+      "suggested_slot": "half_day",
+      "reservation_status": "to_confirm",
+      "stops": [
+        {
+          "order": 1,
+          "property_id": "prop_861b473c5e92",
+          "project_name": "星月总部湾",
+          "address": "",
+          "decision_score": 60.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": [
+            "price_materially_below_comparables"
+          ]
+        },
+        {
+          "order": 2,
+          "property_id": "prop_200ccb9a5d84",
+          "project_name": "星月总部湾",
+          "address": "",
+          "decision_score": 57.9,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": [
+            "price_extremely_below_comparables_requires_explanation"
+          ]
+        },
+        {
+          "order": 3,
+          "property_id": "prop_3ff0baee6921",
+          "project_name": "星月总部湾",
+          "address": "",
+          "decision_score": 57.9,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": [
+            "price_extremely_below_comparables_requires_explanation"
+          ]
+        },
+        {
+          "order": 4,
+          "property_id": "prop_8cb2e549526e",
+          "project_name": "诚信国际大厦",
+          "address": "",
+          "decision_score": 57.9,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": [
+            "price_extremely_below_comparables_requires_explanation"
+          ]
+        }
+      ],
+      "routing_note": "No complete coordinates: grouped by submarket/district and ranked by decision score; verify actual transit order with a map before departure."
+    },
+    {
+      "session": 16,
+      "area": "青浦",
+      "suggested_slot": "half_day",
+      "reservation_status": "to_confirm",
+      "stops": [
+        {
+          "order": 1,
+          "property_id": "prop_ad66ac2f2e09",
+          "project_name": "中建企业天地",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 2,
+          "property_id": "prop_312322b19fe2",
+          "project_name": "中建企业天地",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 3,
+          "property_id": "prop_58ebc7baa053",
+          "project_name": "中建企业天地",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        }
+      ],
+      "routing_note": "No complete coordinates: grouped by submarket/district and ranked by decision score; verify actual transit order with a map before departure."
+    },
+    {
+      "session": 17,
+      "area": "闵行",
+      "suggested_slot": "half_day",
+      "reservation_status": "to_confirm",
+      "stops": [
+        {
+          "order": 1,
+          "property_id": "prop_0a421db2b3b4",
+          "project_name": "万科VMO花园广场",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 2,
+          "property_id": "prop_161dd5490c33",
+          "project_name": "万科VMO花园广场",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 3,
+          "property_id": "prop_4620cc056178",
+          "project_name": "三友产业园",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 4,
+          "property_id": "prop_857d1c74054c",
+          "project_name": "三友产业园",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 5,
+          "property_id": "prop_ce335b22ea7a",
+          "project_name": "三友产业园",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        }
+      ],
+      "routing_note": "No complete coordinates: grouped by submarket/district and ranked by decision score; verify actual transit order with a map before departure."
+    },
+    {
+      "session": 18,
+      "area": "闵行",
+      "suggested_slot": "half_day",
+      "reservation_status": "to_confirm",
+      "stops": [
+        {
+          "order": 1,
+          "property_id": "prop_533c8adf2d3c",
+          "project_name": "三友产业园",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 2,
+          "property_id": "prop_3d25c83a6b6a",
+          "project_name": "乐工坊",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 3,
+          "property_id": "prop_7bd25f55842f",
+          "project_name": "乐工坊",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 4,
+          "property_id": "prop_cfd4a02b2f3c",
+          "project_name": "乐工坊",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 5,
+          "property_id": "prop_ba012d6719b2",
+          "project_name": "创想600",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        }
+      ],
+      "routing_note": "No complete coordinates: grouped by submarket/district and ranked by decision score; verify actual transit order with a map before departure."
+    },
+    {
+      "session": 19,
+      "area": "闵行",
+      "suggested_slot": "half_day",
+      "reservation_status": "to_confirm",
+      "stops": [
+        {
+          "order": 1,
+          "property_id": "prop_3d16546715a0",
+          "project_name": "奉发鸣谷",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 2,
+          "property_id": "prop_9ccb2386c58b",
+          "project_name": "寰启商务大厦",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 3,
+          "property_id": "prop_b39c471e1465",
+          "project_name": "寰泰商务",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 4,
+          "property_id": "prop_87a025f646a6",
+          "project_name": "寰泰商务",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 5,
+          "property_id": "prop_5b111a0df82a",
+          "project_name": "寰泰商务",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        }
+      ],
+      "routing_note": "No complete coordinates: grouped by submarket/district and ranked by decision score; verify actual transit order with a map before departure."
+    },
+    {
+      "session": 20,
+      "area": "闵行",
+      "suggested_slot": "half_day",
+      "reservation_status": "to_confirm",
+      "stops": [
+        {
+          "order": 1,
+          "property_id": "prop_971499ddf7bc",
+          "project_name": "寰泰商务",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 2,
+          "property_id": "prop_270a3f885c90",
+          "project_name": "必翔商台",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 3,
+          "property_id": "prop_fb71872fc334",
+          "project_name": "必翔商台",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 4,
+          "property_id": "prop_b4051272ba54",
+          "project_name": "必翔商台",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 5,
+          "property_id": "prop_d9703459087b",
+          "project_name": "新必产业园",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        }
+      ],
+      "routing_note": "No complete coordinates: grouped by submarket/district and ranked by decision score; verify actual transit order with a map before departure."
+    },
+    {
+      "session": 21,
+      "area": "闵行",
+      "suggested_slot": "half_day",
+      "reservation_status": "to_confirm",
+      "stops": [
+        {
+          "order": 1,
+          "property_id": "prop_ca1b206a717a",
+          "project_name": "新必产业园",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 2,
+          "property_id": "prop_f87b2729b28c",
+          "project_name": "浦江科技广场",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 3,
+          "property_id": "prop_7f2fa1d829c0",
+          "project_name": "浦江科技广场",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 4,
+          "property_id": "prop_2bbccefa766a",
+          "project_name": "由谷产业园",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 5,
+          "property_id": "prop_86856cfbd20e",
+          "project_name": "由谷产业园",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        }
+      ],
+      "routing_note": "No complete coordinates: grouped by submarket/district and ranked by decision score; verify actual transit order with a map before departure."
+    },
+    {
+      "session": 22,
+      "area": "闵行",
+      "suggested_slot": "half_day",
+      "reservation_status": "to_confirm",
+      "stops": [
+        {
+          "order": 1,
+          "property_id": "prop_5f39edfe86fa",
+          "project_name": "由谷产业园",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 2,
+          "property_id": "prop_5501877451ee",
+          "project_name": "禾谷文创四达园",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 3,
+          "property_id": "prop_ccecc6f383a4",
+          "project_name": "蓝海云创环普园",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 4,
+          "property_id": "prop_55abc83a2e92",
+          "project_name": "蓝海云创环普园",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 5,
+          "property_id": "prop_c7a187859508",
+          "project_name": "蕾特商务",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        }
+      ],
+      "routing_note": "No complete coordinates: grouped by submarket/district and ranked by decision score; verify actual transit order with a map before departure."
+    },
+    {
+      "session": 23,
+      "area": "闵行",
+      "suggested_slot": "half_day",
+      "reservation_status": "to_confirm",
+      "stops": [
+        {
+          "order": 1,
+          "property_id": "prop_74991b5546b1",
+          "project_name": "蕾特商务",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 2,
+          "property_id": "prop_fc041d48282d",
+          "project_name": "虹桥丽宝广场",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 3,
+          "property_id": "prop_f8a2b08d1351",
+          "project_name": "虹桥丽宝广场",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 4,
+          "property_id": "prop_24da5fb4d37d",
+          "project_name": "虹桥丽宝广场",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 5,
+          "property_id": "prop_71b8a8ad0775",
+          "project_name": "虹桥富力中心",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        }
+      ],
+      "routing_note": "No complete coordinates: grouped by submarket/district and ranked by decision score; verify actual transit order with a map before departure."
+    },
+    {
+      "session": 24,
+      "area": "闵行",
+      "suggested_slot": "half_day",
+      "reservation_status": "to_confirm",
+      "stops": [
+        {
+          "order": 1,
+          "property_id": "prop_90a5075c48c1",
+          "project_name": "虹桥富力中心",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 2,
+          "property_id": "prop_a913c262055b",
+          "project_name": "锦和越界1199",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 3,
+          "property_id": "prop_430ce2c13679",
+          "project_name": "闿鑫科创园",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 4,
+          "property_id": "prop_93d68bece215",
+          "project_name": "宇培东朔空间",
+          "address": "",
+          "decision_score": 57.9,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": [
+            "price_extremely_below_comparables_requires_explanation"
+          ]
+        }
+      ],
+      "routing_note": "No complete coordinates: grouped by submarket/district and ranked by decision score; verify actual transit order with a map before departure."
+    },
+    {
+      "session": 25,
+      "area": "松江",
+      "suggested_slot": "half_day",
+      "reservation_status": "to_confirm",
+      "stops": [
+        {
+          "order": 1,
+          "property_id": "prop_733b46e5c169",
+          "project_name": "临港卓越科技园",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        }
+      ],
+      "routing_note": "No complete coordinates: grouped by submarket/district and ranked by decision score; verify actual transit order with a map before departure."
+    },
+    {
+      "session": 26,
+      "area": "长宁",
+      "suggested_slot": "half_day",
+      "reservation_status": "to_confirm",
+      "stops": [
+        {
+          "order": 1,
+          "property_id": "prop_dcaa4852610e",
+          "project_name": "东方明珠凯旋中心",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 2,
+          "property_id": "prop_dbfc3c0dac7a",
+          "project_name": "华宁国际广场",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        }
+      ],
+      "routing_note": "No complete coordinates: grouped by submarket/district and ranked by decision score; verify actual transit order with a map before departure."
+    },
+    {
+      "session": 27,
+      "area": "普陀",
+      "suggested_slot": "half_day",
+      "reservation_status": "to_confirm",
+      "stops": [
+        {
+          "order": 1,
+          "property_id": "prop_6159f2660ccc",
+          "project_name": "中海中心",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 2,
+          "property_id": "prop_991c2e8621a8",
+          "project_name": "信泰中心",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 3,
+          "property_id": "prop_018d63ae78d4",
+          "project_name": "华宏商务中心",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 4,
+          "property_id": "prop_23623664ef02",
+          "project_name": "华宏商务中心",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 5,
+          "property_id": "prop_0aff10fde79f",
+          "project_name": "华宏商务中心",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        }
+      ],
+      "routing_note": "No complete coordinates: grouped by submarket/district and ranked by decision score; verify actual transit order with a map before departure."
+    },
+    {
+      "session": 28,
+      "area": "普陀",
+      "suggested_slot": "half_day",
+      "reservation_status": "to_confirm",
+      "stops": [
+        {
+          "order": 1,
+          "property_id": "prop_f4e25a19d732",
+          "project_name": "华宏商务中心",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 2,
+          "property_id": "prop_c658749617f7",
+          "project_name": "华宏商务中心",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 3,
+          "property_id": "prop_40f2caae1c6e",
+          "project_name": "华宏商务中心",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 4,
+          "property_id": "prop_4cec011c0928",
+          "project_name": "康建商务广场",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 5,
+          "property_id": "prop_56ba86b14487",
+          "project_name": "李子园大厦",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        }
+      ],
+      "routing_note": "No complete coordinates: grouped by submarket/district and ranked by decision score; verify actual transit order with a map before departure."
+    },
+    {
+      "session": 29,
+      "area": "普陀",
+      "suggested_slot": "half_day",
+      "reservation_status": "to_confirm",
+      "stops": [
+        {
+          "order": 1,
+          "property_id": "prop_a39fc6c79853",
+          "project_name": "武宁联创大厦",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 2,
+          "property_id": "prop_c9e2d211a333",
+          "project_name": "浙铁绿城长风中心",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 3,
+          "property_id": "prop_ad4737deb3c7",
+          "project_name": "浙铁绿城长风中心",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 4,
+          "property_id": "prop_01600e750712",
+          "project_name": "浦发广场",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 5,
+          "property_id": "prop_edc6c6a39b5c",
+          "project_name": "电科大厦",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        }
+      ],
+      "routing_note": "No complete coordinates: grouped by submarket/district and ranked by decision score; verify actual transit order with a map before departure."
+    },
+    {
+      "session": 30,
+      "area": "普陀",
+      "suggested_slot": "half_day",
+      "reservation_status": "to_confirm",
+      "stops": [
+        {
+          "order": 1,
+          "property_id": "prop_286988aeea4b",
+          "project_name": "高尚领域",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 2,
+          "property_id": "prop_8a3516f1f56d",
+          "project_name": "高尚领域",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 3,
+          "property_id": "prop_e4f12ae04927",
+          "project_name": "高尚领域",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 4,
+          "property_id": "prop_8a88144ed64a",
+          "project_name": "高尚领域",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 5,
+          "property_id": "prop_8170f39a0190",
+          "project_name": "高尚领域",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        }
+      ],
+      "routing_note": "No complete coordinates: grouped by submarket/district and ranked by decision score; verify actual transit order with a map before departure."
+    },
+    {
+      "session": 31,
+      "area": "普陀",
+      "suggested_slot": "half_day",
+      "reservation_status": "to_confirm",
+      "stops": [
+        {
+          "order": 1,
+          "property_id": "prop_27de305e2027",
+          "project_name": "高尚领域",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 2,
+          "property_id": "prop_a228672e7aed",
+          "project_name": "高尚领域",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 3,
+          "property_id": "prop_ed9ae7080c78",
+          "project_name": "高尚领域",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 4,
+          "property_id": "prop_23c2c7169115",
+          "project_name": "高尚领域",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 5,
+          "property_id": "prop_b11d4a9d264d",
+          "project_name": "鸿运大厦",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        }
+      ],
+      "routing_note": "No complete coordinates: grouped by submarket/district and ranked by decision score; verify actual transit order with a map before departure."
+    },
+    {
+      "session": 32,
+      "area": "普陀",
+      "suggested_slot": "half_day",
+      "reservation_status": "to_confirm",
+      "stops": [
+        {
+          "order": 1,
+          "property_id": "prop_204832ddcd84",
+          "project_name": "沙田大厦(写字楼)",
+          "address": "",
+          "decision_score": 62.1,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": [
+            "price_lightly_below_comparables"
+          ]
+        },
+        {
+          "order": 2,
+          "property_id": "prop_b9493b92a879",
+          "project_name": "尚诚国际大厦",
+          "address": "",
+          "decision_score": 60.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": [
+            "price_materially_below_comparables"
+          ]
+        },
+        {
+          "order": 3,
+          "property_id": "prop_34469c097d14",
+          "project_name": "旭辉世纪广场",
+          "address": "",
+          "decision_score": 60.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": [
+            "price_materially_below_comparables"
+          ]
+        },
+        {
+          "order": 4,
+          "property_id": "prop_0724ce7718f3",
+          "project_name": "红星世贸大厦",
+          "address": "",
+          "decision_score": 60.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": [
+            "price_materially_below_comparables"
+          ]
+        },
+        {
+          "order": 5,
+          "property_id": "prop_f5475bb35319",
+          "project_name": "飞雕商务大厦",
+          "address": "",
+          "decision_score": 60.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": [
+            "price_materially_below_comparables"
+          ]
+        }
+      ],
+      "routing_note": "No complete coordinates: grouped by submarket/district and ranked by decision score; verify actual transit order with a map before departure."
+    },
+    {
+      "session": 33,
+      "area": "普陀",
+      "suggested_slot": "half_day",
+      "reservation_status": "to_confirm",
+      "stops": [
+        {
+          "order": 1,
+          "property_id": "prop_3c79864b0a87",
+          "project_name": "高尚领域",
+          "address": "",
+          "decision_score": 60.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": [
+            "price_materially_below_comparables"
+          ]
+        },
+        {
+          "order": 2,
+          "property_id": "prop_a9373c4e8c17",
+          "project_name": "高尚领域",
+          "address": "",
+          "decision_score": 60.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": [
+            "price_materially_below_comparables"
+          ]
+        },
+        {
+          "order": 3,
+          "property_id": "prop_615f2f5070e4",
+          "project_name": "中联大厦",
+          "address": "",
+          "decision_score": 57.9,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": [
+            "price_extremely_below_comparables_requires_explanation"
+          ]
+        },
+        {
+          "order": 4,
+          "property_id": "prop_a09bf0694860",
+          "project_name": "苏宁天御国际广场",
+          "address": "",
+          "decision_score": 57.9,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": [
+            "price_extremely_below_comparables_requires_explanation"
+          ]
+        }
+      ],
+      "routing_note": "No complete coordinates: grouped by submarket/district and ranked by decision score; verify actual transit order with a map before departure."
+    },
+    {
+      "session": 34,
+      "area": "嘉定",
+      "suggested_slot": "half_day",
+      "reservation_status": "to_confirm",
+      "stops": [
+        {
+          "order": 1,
+          "property_id": "prop_bd591dc6254b",
+          "project_name": "环贸国际大厦",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        }
+      ],
+      "routing_note": "No complete coordinates: grouped by submarket/district and ranked by decision score; verify actual transit order with a map before departure."
+    },
+    {
+      "session": 35,
+      "area": "静安",
+      "suggested_slot": "half_day",
+      "reservation_status": "to_confirm",
+      "stops": [
+        {
+          "order": 1,
+          "property_id": "prop_7f9815726378",
+          "project_name": "仲益大厦",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 2,
+          "property_id": "prop_33e260f79af4",
+          "project_name": "仲益大厦",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 3,
+          "property_id": "prop_8bad62dfcdfe",
+          "project_name": "汉中广场",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 4,
+          "property_id": "prop_e53861f68f42",
+          "project_name": "汉中广场",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 5,
+          "property_id": "prop_6d5899b2c742",
+          "project_name": "环球世界大厦",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        }
+      ],
+      "routing_note": "No complete coordinates: grouped by submarket/district and ranked by decision score; verify actual transit order with a map before departure."
+    },
+    {
+      "session": 36,
+      "area": "静安",
+      "suggested_slot": "half_day",
+      "reservation_status": "to_confirm",
+      "stops": [
+        {
+          "order": 1,
+          "property_id": "prop_5419bbbd97f0",
+          "project_name": "现代交通商务大厦",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 2,
+          "property_id": "prop_71ac3104e695",
+          "project_name": "联通国际大厦",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        }
+      ],
+      "routing_note": "No complete coordinates: grouped by submarket/district and ranked by decision score; verify actual transit order with a map before departure."
+    },
+    {
+      "session": 37,
+      "area": "杨浦",
+      "suggested_slot": "half_day",
+      "reservation_status": "to_confirm",
+      "stops": [
+        {
+          "order": 1,
+          "property_id": "prop_64cda241f73f",
+          "project_name": "合生国际中心",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 2,
+          "property_id": "prop_7b88fefad450",
+          "project_name": "海上海新城(办公楼)",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 3,
+          "property_id": "prop_313ac9f2f18c",
+          "project_name": "滨江国际广场",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 4,
+          "property_id": "prop_3fe33d075e01",
+          "project_name": "滨江国际广场",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 5,
+          "property_id": "prop_7c5905f8d886",
+          "project_name": "滨江国际广场",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        }
+      ],
+      "routing_note": "No complete coordinates: grouped by submarket/district and ranked by decision score; verify actual transit order with a map before departure."
+    },
+    {
+      "session": 38,
+      "area": "杨浦",
+      "suggested_slot": "half_day",
+      "reservation_status": "to_confirm",
+      "stops": [
+        {
+          "order": 1,
+          "property_id": "prop_aab4abfd6f58",
+          "project_name": "滨江国际广场",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 2,
+          "property_id": "prop_7dc9ea9c92cd",
+          "project_name": "东方蓝海国际广场",
+          "address": "",
+          "decision_score": 62.1,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": [
+            "price_lightly_below_comparables"
+          ]
+        },
+        {
+          "order": 3,
+          "property_id": "prop_1fe183b79c6f",
+          "project_name": "东方蓝海国际广场",
+          "address": "",
+          "decision_score": 62.1,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": [
+            "price_lightly_below_comparables"
+          ]
+        },
+        {
+          "order": 4,
+          "property_id": "prop_f5887f783d8e",
+          "project_name": "湾谷科技园",
+          "address": "",
+          "decision_score": 60.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": [
+            "price_materially_below_comparables"
+          ]
+        }
+      ],
+      "routing_note": "No complete coordinates: grouped by submarket/district and ranked by decision score; verify actual transit order with a map before departure."
+    },
+    {
+      "session": 39,
+      "area": "黄浦",
+      "suggested_slot": "half_day",
+      "reservation_status": "to_confirm",
+      "stops": [
+        {
+          "order": 1,
+          "property_id": "prop_8f8f50a78d46",
+          "project_name": "德必WE",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 2,
+          "property_id": "prop_b90fc0b4a181",
+          "project_name": "福申大厦",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        }
+      ],
+      "routing_note": "No complete coordinates: grouped by submarket/district and ranked by decision score; verify actual transit order with a map before departure."
+    },
+    {
+      "session": 40,
+      "area": "宝山",
+      "suggested_slot": "half_day",
+      "reservation_status": "to_confirm",
+      "stops": [
+        {
+          "order": 1,
+          "property_id": "prop_a549464537b8",
+          "project_name": "顾众湾科创园",
+          "address": "",
+          "decision_score": 63.4,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        }
+      ],
+      "routing_note": "No complete coordinates: grouped by submarket/district and ranked by decision score; verify actual transit order with a map before departure."
+    },
+    {
+      "session": 41,
+      "area": "浦江",
+      "suggested_slot": "half_day",
+      "reservation_status": "to_confirm",
+      "stops": [
+        {
+          "order": 1,
+          "property_id": "prop_ca88656cf630",
+          "project_name": "由谷产业园",
+          "address": "",
+          "decision_score": 56.9,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        },
+        {
+          "order": 2,
+          "property_id": "prop_6f8628013175",
+          "project_name": "由谷产业园",
+          "address": "",
+          "decision_score": 56.9,
+          "verification_level": "V0",
+          "recommendation_status": "verify_first",
+          "focus": []
+        }
+      ],
+      "routing_note": "No complete coordinates: grouped by submarket/district and ranked by decision score; verify actual transit order with a map before departure."
+    }
+  ],
+  "notes": [
+    "Do not represent estimated routing as real-time travel time unless verified with a map/navigation source.",
+    "verify_first candidates should be confirmed before reserving a physical visit slot."
+  ]
+}

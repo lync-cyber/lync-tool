@@ -1,0 +1,95 @@
+{
+  "summary": {
+    "search_run_count": 16,
+    "counts_by_lane": {
+      "citywide_baseline": 1,
+      "preferred_area": 1,
+      "transit_corridor": 1,
+      "comparison_area": 3,
+      "project_lookup": 10
+    },
+    "primary_pages_by_source": {
+      "beike": 11
+    },
+    "comparison_area_count": 3,
+    "project_lookup_count": 7,
+    "preferred_area_listing_share": 0.0308,
+    "blockers": 12,
+    "warnings": 0,
+    "coverage_ready": false
+  },
+  "issues": [
+    {
+      "severity": "blocker",
+      "code": "hard_cap_too_shallow",
+      "run_id": "search_d7a6506450c8",
+      "detail": "3/5"
+    },
+    {
+      "severity": "blocker",
+      "code": "hard_cap_too_shallow",
+      "run_id": "search_1e6fd9bead9f",
+      "detail": "2/5"
+    },
+    {
+      "severity": "blocker",
+      "code": "hard_cap_too_shallow",
+      "run_id": "search_e16e528e123f",
+      "detail": "2/5"
+    },
+    {
+      "severity": "blocker",
+      "code": "hard_cap_too_shallow",
+      "run_id": "search_5ba8c4daf2f1",
+      "detail": "2/5"
+    },
+    {
+      "severity": "blocker",
+      "code": "hard_cap_too_shallow",
+      "run_id": "search_f3d15f46ab71",
+      "detail": "2/5"
+    },
+    {
+      "severity": "blocker",
+      "code": "search_run_evidence_empty",
+      "run_id": "search_b531c69a877c",
+      "detail": "evidence/browser_extracts/lezu_yougu_project.json"
+    },
+    {
+      "severity": "blocker",
+      "code": "search_run_evidence_empty",
+      "run_id": "search_495cd3f8fa41",
+      "detail": "evidence/browser_extracts/anjuke_shop_scope_stop.json"
+    },
+    {
+      "severity": "blocker",
+      "code": "shallow_search_without_valid_early_stop",
+      "run_id": "search_495cd3f8fa41",
+      "detail": "1/2; hard_cap_with_reason"
+    },
+    {
+      "severity": "blocker",
+      "code": "hard_cap_too_shallow",
+      "run_id": "search_495cd3f8fa41",
+      "detail": "1/5"
+    },
+    {
+      "severity": "blocker",
+      "code": "citywide_baseline_contains_preference_constraint",
+      "run_id": "search_d7a6506450c8",
+      "detail": "上海全市"
+    },
+    {
+      "severity": "blocker",
+      "code": "preferred_area_not_searched",
+      "run_id": null,
+      "detail": "8号线沿线"
+    },
+    {
+      "severity": "blocker",
+      "code": "high_frequency_project_not_reverse_searched",
+      "run_id": null,
+      "detail": "高尚领域"
+    }
+  ]
+}

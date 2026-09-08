@@ -1,0 +1,98 @@
+{
+  "city": "上海",
+  "transaction_type": "rent",
+  "asset_type": "写字楼/商铺",
+  "business_use": "无人自习室或共享办公空间门店",
+  "target_areas": ["8号线沿线", "浦江镇"],
+  "location_strategy": {
+    "mode": "citywide_with_preferences",
+    "preferred_areas": ["8号线沿线", "浦江镇"],
+    "hard_boundary_areas": [],
+    "comparison_area_min": 2,
+    "user_named_projects": []
+  },
+  "budget": {
+    "cost_basis": "fixed_monthly_cost",
+    "fixed_monthly_cost_ideal_rmb": 10000,
+    "fixed_monthly_cost_max_rmb": 15000,
+    "monthly_ideal_rmb": null,
+    "monthly_max_rmb": null,
+    "rent_sqm_day_max": null
+  },
+  "area_range": {
+    "min_sqm": 100,
+    "max_sqm": null
+  },
+  "move_in_date": "",
+  "lease_term": "",
+  "must_have": [],
+  "hard_requirements": [
+    {
+      "id": "fixed_cost_floor",
+      "label": "固定月总成本不低于6000元",
+      "field": "fixed_monthly_cost_rmb",
+      "operator": "gte",
+      "value": 6000,
+      "unknown_policy": "verify_first"
+    },
+    {
+      "id": "metro_walk",
+      "label": "地铁步行不超过10分钟",
+      "field": "facts.metro_walk_minutes",
+      "operator": "lte",
+      "value": 10,
+      "unknown_policy": "verify_first"
+    },
+    {
+      "id": "night_weekend_access",
+      "label": "夜间及周末可自由进出",
+      "field": "facts.night_weekend_access",
+      "operator": "truthy",
+      "value": true,
+      "unknown_policy": "verify_first"
+    },
+    {
+      "id": "business_use_allowed",
+      "label": "允许无人自习室或共享办公经营",
+      "field": "facts.business_use_allowed",
+      "operator": "truthy",
+      "value": true,
+      "unknown_policy": "verify_first"
+    },
+    {
+      "id": "fire_compliance",
+      "label": "消防条件合规",
+      "field": "facts.fire_compliance",
+      "operator": "truthy",
+      "value": true,
+      "unknown_policy": "verify_first"
+    }
+  ],
+  "nice_to_have": ["面积优先100–200平方米", "地段与总成本合适时可考虑200平方米以上", "精装修或低改造成本", "独立空调"],
+  "exclusions": ["偏远郊区"],
+  "site_visit_constraints": {
+    "dates": [],
+    "start_location": "",
+    "transport_mode": "public_transit"
+  },
+  "assumptions": [
+    "6000元作为成本下限用于过滤明显异常低价线索；若用户后续说明低于6000元也可接受，应移除此硬条件。",
+    "200平方米不是硬上限；面积超过200平方米但固定月总成本和地段合适时仍保留。",
+    "偏远郊区按具体交通和商圈成熟度人工判断；浦江镇及8号线沿线不因位于外环附近自动排除。",
+    "未指定入驻日期、租期和装修状态，当前不作为硬筛选。"
+  ],
+  "desired_report_maturity": "research_shortlist",
+  "interview": {
+    "status": "completed",
+    "decisions": [
+      "固定月总成本口径包含租金、物业费、固定空调费及其他已知固定周期费用。",
+      "固定月总成本目标范围为6000至15000元。",
+      "地铁步行10分钟内是硬条件。",
+      "面积至少100平方米，100至200平方米优先，超过200平方米可条件性保留。",
+      "夜间及周末自由进出、经营用途获准、消防合规属于硬条件。",
+      "优先完成贝壳和链家来源筛选。"
+    ],
+    "unresolved_critical": [],
+    "completed_at": "2026-08-10T20:58:00+08:00"
+  }
+}

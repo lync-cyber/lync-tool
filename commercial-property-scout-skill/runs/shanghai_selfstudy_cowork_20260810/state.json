@@ -1,0 +1,52 @@
+{
+  "started_at": "2026-08-10T20:54:11+08:00",
+  "last_updated_at": "2026-08-10T22:32:29+08:00",
+  "interview_status": "completed",
+  "brief_complete": true,
+  "source_plan_path": "runs/shanghai_selfstudy_cowork_20260810/data/source_plan.json",
+  "captcha_waiting_on": null,
+  "raw_listing_count": 195,
+  "deduped_property_count": 182,
+  "verified_property_count": 1,
+  "report_path": "runs/shanghai_selfstudy_cowork_20260810/shanghai_office_shortlist_20260810.html",
+  "report_maturity": "discovery_draft",
+  "next_actions": [
+    "Resolve brief/source/evidence QA blockers before treating report as final"
+  ],
+  "workflow_status": "in_progress",
+  "user_intervention_last_resolved": {
+    "source_key": "beike",
+    "resolved_at": "2026-08-10T21:23:24+08:00",
+    "resumed_status": "completed_with_results"
+  },
+  "execution_dependencies": {
+    "pandas": {
+      "available": true,
+      "version": "3.0.5",
+      "error": ""
+    },
+    "bs4": {
+      "available": true,
+      "version": "4.15.0",
+      "error": ""
+    },
+    "lxml": {
+      "available": true,
+      "version": "6.1.1",
+      "error": ""
+    },
+    "openpyxl": {
+      "available": true,
+      "version": "3.1.5",
+      "error": ""
+    }
+  },
+  "dataset_profile_path": "runs/shanghai_selfstudy_cowork_20260810/data/dataset_profile.json",
+  "analysis_engine_requested": "stdlib",
+  "dedupe_pandas_threshold": 250,
+  "html_qa_path": "runs/shanghai_selfstudy_cowork_20260810/data/html_qa_report.json",
+  "brief_qa_path": "runs/shanghai_selfstudy_cowork_20260810/data/brief_qa_report.json",
+  "source_qa_path": "runs/shanghai_selfstudy_cowork_20260810/data/source_qa_report.json",
+  "collection_log_path": "runs/shanghai_selfstudy_cowork_20260810/data/collection_log.json",
+  "collection_qa_path": "runs/shanghai_selfstudy_cowork_20260810/data/collection_qa_report.json"
+}

@@ -1,0 +1,268 @@
+{
+  "summary": {
+    "property_count": 182,
+    "top5_count": 5,
+    "blockers": 17,
+    "warnings": 14,
+    "info": 11,
+    "ready_for_final_report": false,
+    "report_maturity": "discovery_draft",
+    "brief_ready": true,
+    "source_coverage_ready": false,
+    "collection_coverage_ready": false
+  },
+  "issues": [
+    {
+      "severity": "warning",
+      "code": "source:required_source_user_waived",
+      "source_key": "lianjia",
+      "detail": "贝壳和链家是同一平台，贝壳筛选完成后可跳过链家，从后续其它平台进行交叉验证和补充"
+    },
+    {
+      "severity": "blocker",
+      "code": "source:high_priority_source_not_attempted",
+      "source_key": "lianjia",
+      "detail": ""
+    },
+    {
+      "severity": "blocker",
+      "code": "source:source_role_minimum_not_met",
+      "source_key": null,
+      "detail": "primary_discovery: 1/2"
+    },
+    {
+      "severity": "warning",
+      "code": "source:single_platform_concentration",
+      "source_key": "贝壳",
+      "detail": "188/195=96.4%"
+    },
+    {
+      "severity": "blocker",
+      "code": "collection:hard_cap_too_shallow",
+      "run_id": "search_d7a6506450c8",
+      "detail": "3/5"
+    },
+    {
+      "severity": "blocker",
+      "code": "collection:hard_cap_too_shallow",
+      "run_id": "search_1e6fd9bead9f",
+      "detail": "2/5"
+    },
+    {
+      "severity": "blocker",
+      "code": "collection:hard_cap_too_shallow",
+      "run_id": "search_e16e528e123f",
+      "detail": "2/5"
+    },
+    {
+      "severity": "blocker",
+      "code": "collection:hard_cap_too_shallow",
+      "run_id": "search_5ba8c4daf2f1",
+      "detail": "2/5"
+    },
+    {
+      "severity": "blocker",
+      "code": "collection:hard_cap_too_shallow",
+      "run_id": "search_f3d15f46ab71",
+      "detail": "2/5"
+    },
+    {
+      "severity": "blocker",
+      "code": "collection:search_run_evidence_empty",
+      "run_id": "search_b531c69a877c",
+      "detail": "evidence/browser_extracts/lezu_yougu_project.json"
+    },
+    {
+      "severity": "blocker",
+      "code": "collection:search_run_evidence_empty",
+      "run_id": "search_495cd3f8fa41",
+      "detail": "evidence/browser_extracts/anjuke_shop_scope_stop.json"
+    },
+    {
+      "severity": "blocker",
+      "code": "collection:shallow_search_without_valid_early_stop",
+      "run_id": "search_495cd3f8fa41",
+      "detail": "1/2; hard_cap_with_reason"
+    },
+    {
+      "severity": "blocker",
+      "code": "collection:hard_cap_too_shallow",
+      "run_id": "search_495cd3f8fa41",
+      "detail": "1/5"
+    },
+    {
+      "severity": "blocker",
+      "code": "collection:citywide_baseline_contains_preference_constraint",
+      "run_id": "search_d7a6506450c8",
+      "detail": "上海全市"
+    },
+    {
+      "severity": "blocker",
+      "code": "collection:preferred_area_not_searched",
+      "run_id": null,
+      "detail": "8号线沿线"
+    },
+    {
+      "severity": "blocker",
+      "code": "collection:high_frequency_project_not_reverse_searched",
+      "run_id": null,
+      "detail": "高尚领域"
+    },
+    {
+      "severity": "info",
+      "code": "multiple_ads_but_single_independent_platform",
+      "property_id": "prop_ada0c04a9c28",
+      "detail": ""
+    },
+    {
+      "severity": "warning",
+      "code": "top5_fixed_monthly_cost_incomplete",
+      "property_id": "prop_81f15523cb74",
+      "detail": ""
+    },
+    {
+      "severity": "warning",
+      "code": "top5_missing_images",
+      "property_id": "prop_81f15523cb74",
+      "detail": ""
+    },
+    {
+      "severity": "info",
+      "code": "multiple_ads_but_single_independent_platform",
+      "property_id": "prop_c7d49fe1f195",
+      "detail": ""
+    },
+    {
+      "severity": "warning",
+      "code": "top5_fixed_monthly_cost_incomplete",
+      "property_id": "prop_1a6dc8bb02db",
+      "detail": ""
+    },
+    {
+      "severity": "blocker",
+      "code": "top5_single_source_v0",
+      "property_id": "prop_1a6dc8bb02db",
+      "detail": ""
+    },
+    {
+      "severity": "warning",
+      "code": "top5_missing_images",
+      "property_id": "prop_1a6dc8bb02db",
+      "detail": ""
+    },
+    {
+      "severity": "warning",
+      "code": "top5_fixed_monthly_cost_incomplete",
+      "property_id": "prop_c15e08895a34",
+      "detail": ""
+    },
+    {
+      "severity": "blocker",
+      "code": "top5_single_source_v0",
+      "property_id": "prop_c15e08895a34",
+      "detail": ""
+    },
+    {
+      "severity": "info",
+      "code": "multiple_ads_but_single_independent_platform",
+      "property_id": "prop_c15e08895a34",
+      "detail": ""
+    },
+    {
+      "severity": "warning",
+      "code": "top5_missing_images",
+      "property_id": "prop_c15e08895a34",
+      "detail": ""
+    },
+    {
+      "severity": "info",
+      "code": "multiple_ads_but_single_independent_platform",
+      "property_id": "prop_7f9815726378",
+      "detail": ""
+    },
+    {
+      "severity": "info",
+      "code": "multiple_ads_but_single_independent_platform",
+      "property_id": "prop_aab4abfd6f58",
+      "detail": ""
+    },
+    {
+      "severity": "warning",
+      "code": "top5_fixed_monthly_cost_incomplete",
+      "property_id": "prop_03a1887abc08",
+      "detail": ""
+    },
+    {
+      "severity": "blocker",
+      "code": "top5_single_source_v0",
+      "property_id": "prop_03a1887abc08",
+      "detail": ""
+    },
+    {
+      "severity": "warning",
+      "code": "top5_missing_images",
+      "property_id": "prop_03a1887abc08",
+      "detail": ""
+    },
+    {
+      "severity": "info",
+      "code": "multiple_ads_but_single_independent_platform",
+      "property_id": "prop_971499ddf7bc",
+      "detail": ""
+    },
+    {
+      "severity": "info",
+      "code": "multiple_ads_but_single_independent_platform",
+      "property_id": "prop_c9e2d211a333",
+      "detail": ""
+    },
+    {
+      "severity": "info",
+      "code": "multiple_ads_but_single_independent_platform",
+      "property_id": "prop_b11d4a9d264d",
+      "detail": ""
+    },
+    {
+      "severity": "info",
+      "code": "multiple_ads_but_single_independent_platform",
+      "property_id": "prop_8a88144ed64a",
+      "detail": ""
+    },
+    {
+      "severity": "info",
+      "code": "multiple_ads_but_single_independent_platform",
+      "property_id": "prop_8170f39a0190",
+      "detail": ""
+    },
+    {
+      "severity": "info",
+      "code": "multiple_ads_but_single_independent_platform",
+      "property_id": "prop_065609912c83",
+      "detail": ""
+    },
+    {
+      "severity": "warning",
+      "code": "top5_fixed_monthly_cost_incomplete",
+      "property_id": "prop_93603a92f160",
+      "detail": ""
+    },
+    {
+      "severity": "warning",
+      "code": "top5_missing_images",
+      "property_id": "prop_93603a92f160",
+      "detail": ""
+    },
+    {
+      "severity": "warning",
+      "code": "missing_area",
+      "property_id": "prop_d25e5ec3dc64",
+      "detail": ""
+    },
+    {
+      "severity": "warning",
+      "code": "missing_area",
+      "property_id": "prop_6d78912ae7a2",
+      "detail": ""
+    }
+  ]
+}

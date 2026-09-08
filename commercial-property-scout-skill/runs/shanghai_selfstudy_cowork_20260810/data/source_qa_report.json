@@ -1,0 +1,52 @@
+{
+  "summary": {
+    "planned_source_count": 9,
+    "listing_count": 195,
+    "terminal_attempts_by_role": {
+      "primary_discovery": 1,
+      "verification": 1,
+      "benchmark": 3,
+      "broad_discovery": 2
+    },
+    "high_priority_terminal_attempts": 5,
+    "required_primary_source_status": {
+      "beike": "completed_with_results",
+      "lianjia": "user_waived"
+    },
+    "waiting_for_user_intervention": false,
+    "counts_by_platform": {
+      "贝壳": 188,
+      "安居客": 7
+    },
+    "max_single_platform_share": 0.9641,
+    "blockers": 2,
+    "warnings": 2,
+    "coverage_ready": false
+  },
+  "issues": [
+    {
+      "severity": "warning",
+      "code": "required_source_user_waived",
+      "source_key": "lianjia",
+      "detail": "贝壳和链家是同一平台，贝壳筛选完成后可跳过链家，从后续其它平台进行交叉验证和补充"
+    },
+    {
+      "severity": "blocker",
+      "code": "high_priority_source_not_attempted",
+      "source_key": "lianjia",
+      "detail": ""
+    },
+    {
+      "severity": "blocker",
+      "code": "source_role_minimum_not_met",
+      "source_key": null,
+      "detail": "primary_discovery: 1/2"
+    },
+    {
+      "severity": "warning",
+      "code": "single_platform_concentration",
+      "source_key": "贝壳",
+      "detail": "188/195=96.4%"
+    }
+  ]
+}

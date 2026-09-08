@@ -1,0 +1,163 @@
+{
+  "engine": "stdlib",
+  "row_count": 195,
+  "missingness": {
+    "source_platform": {
+      "missing": 0,
+      "ratio": 0.0
+    },
+    "source_url": {
+      "missing": 0,
+      "ratio": 0.0
+    },
+    "project_name": {
+      "missing": 0,
+      "ratio": 0.0
+    },
+    "address_raw": {
+      "missing": 191,
+      "ratio": 0.9795
+    },
+    "district": {
+      "missing": 0,
+      "ratio": 0.0
+    },
+    "submarket": {
+      "missing": 186,
+      "ratio": 0.9538
+    },
+    "area_sqm": {
+      "missing": 2,
+      "ratio": 0.0103
+    },
+    "asking_price_raw": {
+      "missing": 0,
+      "ratio": 0.0
+    },
+    "rent_rmb_sqm_day": {
+      "missing": 0,
+      "ratio": 0.0
+    },
+    "rent_rmb_month": {
+      "missing": 0,
+      "ratio": 0.0
+    },
+    "sale_total_rmb": {
+      "missing": 7,
+      "ratio": 0.0359
+    },
+    "sale_rmb_sqm": {
+      "missing": 195,
+      "ratio": 1.0
+    },
+    "captured_at": {
+      "missing": 0,
+      "ratio": 0.0
+    }
+  },
+  "counts_by_platform": {
+    "贝壳": 188,
+    "安居客": 7
+  },
+  "counts_by_district": {
+    "闵行": 58,
+    "徐汇": 44,
+    "普陀": 40,
+    "浦东": 25,
+    "杨浦": 10,
+    "静安": 8,
+    "青浦": 3,
+    "长宁": 2,
+    "黄浦": 2,
+    "松江": 1,
+    "嘉定": 1,
+    "宝山": 1
+  },
+  "top_projects": {
+    "高尚领域": 15,
+    "由谷产业园": 14,
+    "乐工坊": 7,
+    "海洋石油大厦": 6,
+    "智慧谷": 6,
+    "华宏商务中心": 6,
+    "滨江国际广场": 5,
+    "寰泰商务": 5,
+    "万科VMO花园广场": 4,
+    "三友产业园": 4,
+    "光大会展中心": 4,
+    "光启城": 4,
+    "桂果园": 4,
+    "中建企业天地": 3,
+    "虹桥丽宝广场": 3,
+    "星月总部湾": 3,
+    "仲益大厦": 3,
+    "必翔商台": 3,
+    "永升大厦": 3,
+    "BHC中环中心": 3,
+    "浙铁绿城长风中心": 3,
+    "飞雕国际大厦": 3,
+    "振华企业广场": 2,
+    "生命人寿大厦": 2,
+    "圣爱大厦": 2,
+    "由由燕乔大厦": 2,
+    "东方蓝海国际广场": 2,
+    "虹桥富力中心": 2,
+    "蕾特商务": 2,
+    "浦江科技广场": 2
+  },
+  "numeric_summary": {
+    "rent_rmb_sqm_day": {
+      "count": 195,
+      "min": 1.1,
+      "p25": 2.0,
+      "median": 2.7,
+      "p75": 3.2,
+      "max": 4.48
+    },
+    "rent_rmb_month": {
+      "count": 195,
+      "min": 2500.0,
+      "p25": 8700.0,
+      "median": 11000.0,
+      "p75": 13050.0,
+      "max": 96200.0
+    },
+    "sale_rmb_sqm": {
+      "count": 0,
+      "min": null,
+      "p25": null,
+      "median": null,
+      "p75": null,
+      "max": null
+    },
+    "sale_total_rmb": {
+      "count": 188,
+      "min": 2500.0,
+      "p25": 8900.0,
+      "median": 11200.000000000002,
+      "p75": 13225.0,
+      "max": 96199.99999999999
+    },
+    "area_sqm": {
+      "count": 193,
+      "min": 60.0,
+      "p25": 110.0,
+      "median": 130.0,
+      "p75": 152.36,
+      "max": 1436.6
+    }
+  },
+  "counts_by_canonical_platform": {
+    "贝壳": 188,
+    "安居客": 7
+  },
+  "counts_by_source_role": {
+    "primary_discovery": 188,
+    "broad_discovery": 7
+  },
+  "source_concentration": {
+    "dominant_platform": "贝壳",
+    "dominant_count": 188,
+    "dominant_share": 0.9641
+  }
+}

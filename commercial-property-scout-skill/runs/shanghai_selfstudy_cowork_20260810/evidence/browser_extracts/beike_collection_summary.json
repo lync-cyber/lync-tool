@@ -1,0 +1,123 @@
+{
+  "citywide": [
+    {
+      "page": 1,
+      "results_seen": 20,
+      "new_unique_listings": 20,
+      "new_unique_projects": 16,
+      "new_qualified_listings": 20,
+      "filters_verified": true
+    },
+    {
+      "page": 2,
+      "results_seen": 20,
+      "new_unique_listings": 19,
+      "new_unique_projects": 10,
+      "new_qualified_listings": 20,
+      "filters_verified": true
+    },
+    {
+      "page": 3,
+      "results_seen": 20,
+      "new_unique_listings": 20,
+      "new_unique_projects": 10,
+      "new_qualified_listings": 20,
+      "filters_verified": true
+    }
+  ],
+  "pujiang": [
+    {
+      "page": 1,
+      "results_seen": 20,
+      "new_unique_listings": 20,
+      "new_unique_projects": 10,
+      "new_qualified_listings": 20,
+      "filters_verified": true
+    },
+    {
+      "page": 2,
+      "results_seen": 20,
+      "new_unique_listings": 7,
+      "new_unique_projects": 2,
+      "new_qualified_listings": 20,
+      "filters_verified": true
+    }
+  ],
+  "line8": [
+    {
+      "page": 1,
+      "results_seen": 20,
+      "new_unique_listings": 20,
+      "new_unique_projects": 11,
+      "new_qualified_listings": 20,
+      "filters_verified": true
+    },
+    {
+      "page": 2,
+      "results_seen": 20,
+      "new_unique_listings": 20,
+      "new_unique_projects": 10,
+      "new_qualified_listings": 20,
+      "filters_verified": true
+    }
+  ],
+  "putuo": [
+    {
+      "page": 1,
+      "results_seen": 20,
+      "new_unique_listings": 20,
+      "new_unique_projects": 11,
+      "new_qualified_listings": 20,
+      "filters_verified": true
+    },
+    {
+      "page": 2,
+      "results_seen": 20,
+      "new_unique_listings": 20,
+      "new_unique_projects": 7,
+      "new_qualified_listings": 20,
+      "filters_verified": true
+    }
+  ],
+  "xuhui": [
+    {
+      "page": 1,
+      "results_seen": 20,
+      "new_unique_listings": 20,
+      "new_unique_projects": 13,
+      "new_qualified_listings": 20,
+      "filters_verified": true
+    },
+    {
+      "page": 2,
+      "results_seen": 20,
+      "new_unique_listings": 20,
+      "new_unique_projects": 9,
+      "new_qualified_listings": 20,
+      "filters_verified": true
+    }
+  ],
+  "projects": [
+    {
+      "query": "由谷产业园",
+      "results": 12,
+      "projects": 1,
+      "url": "https://shangye.ke.com/sh/xzl_rent.html?query_content=%E7%94%B1%E8%B0%B7%E4%BA%A7%E4%B8%9A%E5%9B%AD",
+      "summary": "已为您找到 12 间 上海由谷产业园写字楼"
+    },
+    {
+      "query": "乐工坊",
+      "results": 7,
+      "projects": 1,
+      "url": "https://shangye.ke.com/sh/xzl_rent.html?query_content=%E4%B9%90%E5%B7%A5%E5%9D%8A",
+      "summary": "已为您找到 7 间 上海乐工坊写字楼"
+    },
+    {
+      "query": "万科VMO花园广场",
+      "results": 4,
+      "projects": 1,
+      "url": "https://shangye.ke.com/sh/xzl_rent.html?query_content=%E4%B8%87%E7%A7%91VMO%E8%8A%B1%E5%9B%AD%E5%B9%BF%E5%9C%BA",
+      "summary": "已为您找到 4 间 上海万科VMO花园广场写字楼"
+    }
+  ]
+}

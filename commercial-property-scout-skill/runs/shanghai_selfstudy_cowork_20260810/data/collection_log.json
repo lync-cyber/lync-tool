@@ -1,0 +1,520 @@
+{
+  "version": 1,
+  "created_at": "2026-08-10T20:54:11+08:00",
+  "last_updated_at": "2026-08-10T22:25:28+08:00",
+  "coverage_policy": {
+    "min_pages_per_nonterminal_run": 2,
+    "min_pages_per_primary_source": 3,
+    "min_comparison_areas": 2,
+    "min_project_lookups": 3,
+    "saturation_low_novelty_pages": 2,
+    "saturation_novelty_threshold": 0.1,
+    "hard_cap_min_pages": 5,
+    "require_search_evidence": true,
+    "require_page_metrics": true,
+    "preferred_area_share_warning": 0.8
+  },
+  "search_runs": [
+    {
+      "run_id": "search_d7a6506450c8",
+      "source_key": "beike",
+      "source_role": "primary_discovery",
+      "lane": "citywide_baseline",
+      "query": "全市；总租金0.6-1.5万元/月；面积100-300㎡；近地铁",
+      "area": "上海全市",
+      "url": "https://shangye.ke.com/sh/xzl_rent.html",
+      "evidence_ref": "evidence/screenshots/beike/citywide_page1_20260810.png",
+      "started_at": "2026-08-10T21:19:41+08:00",
+      "completed_at": "2026-08-10T21:19:41+08:00",
+      "pages_examined": 3,
+      "results_seen": 60,
+      "new_unique_listings": 59,
+      "new_unique_projects": 36,
+      "consecutive_low_novelty_pages": 0,
+      "page_metrics": [
+        {
+          "page": 1,
+          "results_seen": 20,
+          "new_unique_listings": 20,
+          "new_unique_projects": 16,
+          "new_qualified_listings": 20,
+          "filters_verified": true
+        },
+        {
+          "page": 2,
+          "results_seen": 20,
+          "new_unique_listings": 19,
+          "new_unique_projects": 10,
+          "new_qualified_listings": 20,
+          "filters_verified": true
+        },
+        {
+          "page": 3,
+          "results_seen": 20,
+          "new_unique_listings": 20,
+          "new_unique_projects": 10,
+          "new_qualified_listings": 20,
+          "filters_verified": true
+        }
+      ],
+      "terminal_reason": "hard_cap_with_reason",
+      "notes": "完成3页全市基线后转入偏好与对照区域；继续全市翻页的边际价值低于地理防偏和项目反查。"
+    },
+    {
+      "run_id": "search_1e6fd9bead9f",
+      "source_key": "beike",
+      "source_role": "primary_discovery",
+      "lane": "preferred_area",
+      "query": "浦江镇；总租金0.6-1.5万元/月；面积100-300㎡；近地铁",
+      "area": "浦江镇",
+      "url": "https://shangye.ke.com/sh/xzl_rent.html?query_content=%E6%B5%A6%E6%B1%9F%E9%95%87",
+      "evidence_ref": "evidence/screenshots/beike/pujiang_page1_20260810.png",
+      "started_at": "2026-08-10T21:19:43+08:00",
+      "completed_at": "2026-08-10T21:19:43+08:00",
+      "pages_examined": 2,
+      "results_seen": 40,
+      "new_unique_listings": 27,
+      "new_unique_projects": 12,
+      "consecutive_low_novelty_pages": 0,
+      "page_metrics": [
+        {
+          "page": 1,
+          "results_seen": 20,
+          "new_unique_listings": 20,
+          "new_unique_projects": 10,
+          "new_qualified_listings": 20,
+          "filters_verified": true
+        },
+        {
+          "page": 2,
+          "results_seen": 20,
+          "new_unique_listings": 7,
+          "new_unique_projects": 2,
+          "new_qualified_listings": 20,
+          "filters_verified": true
+        }
+      ],
+      "terminal_reason": "hard_cap_with_reason",
+      "notes": "第2页重复广告显著增加；转为高频项目反查，比继续堆同项目广告更有价值。"
+    },
+    {
+      "run_id": "search_e16e528e123f",
+      "source_key": "beike",
+      "source_role": "primary_discovery",
+      "lane": "transit_corridor",
+      "query": "8号线；总租金0.6-1.5万元/月；面积100-300㎡；近地铁",
+      "area": "8号线关键词沿线",
+      "url": "https://shangye.ke.com/sh/xzl_rent.html?query_content=8%E5%8F%B7%E7%BA%BF",
+      "evidence_ref": "evidence/screenshots/beike/line8_page1_20260810.png",
+      "started_at": "2026-08-10T21:19:46+08:00",
+      "completed_at": "2026-08-10T21:19:46+08:00",
+      "pages_examined": 2,
+      "results_seen": 40,
+      "new_unique_listings": 40,
+      "new_unique_projects": 21,
+      "consecutive_low_novelty_pages": 0,
+      "page_metrics": [
+        {
+          "page": 1,
+          "results_seen": 20,
+          "new_unique_listings": 20,
+          "new_unique_projects": 11,
+          "new_qualified_listings": 20,
+          "filters_verified": true
+        },
+        {
+          "page": 2,
+          "results_seen": 20,
+          "new_unique_listings": 20,
+          "new_unique_projects": 10,
+          "new_qualified_listings": 20,
+          "filters_verified": true
+        }
+      ],
+      "terminal_reason": "hard_cap_with_reason",
+      "notes": "平台关键词匹配范围较宽，存在非8号线项目；后续以项目地址和地铁站反查替代继续扩大模糊结果。"
+    },
+    {
+      "run_id": "search_5ba8c4daf2f1",
+      "source_key": "beike",
+      "source_role": "primary_discovery",
+      "lane": "comparison_area",
+      "query": "普陀；总租金0.6-1.5万元/月；面积100-300㎡；近地铁",
+      "area": "普陀",
+      "url": "https://shangye.ke.com/sh/xzl_rent.html?query_content=%E6%99%AE%E9%99%80",
+      "evidence_ref": "evidence/screenshots/beike/putuo_page1_20260810.png",
+      "started_at": "2026-08-10T21:19:48+08:00",
+      "completed_at": "2026-08-10T21:19:48+08:00",
+      "pages_examined": 2,
+      "results_seen": 40,
+      "new_unique_listings": 40,
+      "new_unique_projects": 18,
+      "consecutive_low_novelty_pages": 0,
+      "page_metrics": [
+        {
+          "page": 1,
+          "results_seen": 20,
+          "new_unique_listings": 20,
+          "new_unique_projects": 11,
+          "new_qualified_listings": 20,
+          "filters_verified": true
+        },
+        {
+          "page": 2,
+          "results_seen": 20,
+          "new_unique_listings": 20,
+          "new_unique_projects": 7,
+          "new_qualified_listings": 20,
+          "filters_verified": true
+        }
+      ],
+      "terminal_reason": "hard_cap_with_reason",
+      "notes": "作为偏好区域外成本与交通对照，2页覆盖18个项目；后续资源优先核验更高潜单元。"
+    },
+    {
+      "run_id": "search_f3d15f46ab71",
+      "source_key": "beike",
+      "source_role": "primary_discovery",
+      "lane": "comparison_area",
+      "query": "徐汇；总租金0.6-1.5万元/月；面积100-300㎡；近地铁",
+      "area": "徐汇",
+      "url": "https://shangye.ke.com/sh/xzl_rent.html?query_content=%E5%BE%90%E6%B1%87",
+      "evidence_ref": "evidence/screenshots/beike/xuhui_page1_20260810.png",
+      "started_at": "2026-08-10T21:19:51+08:00",
+      "completed_at": "2026-08-10T21:19:51+08:00",
+      "pages_examined": 2,
+      "results_seen": 40,
+      "new_unique_listings": 40,
+      "new_unique_projects": 22,
+      "consecutive_low_novelty_pages": 0,
+      "page_metrics": [
+        {
+          "page": 1,
+          "results_seen": 20,
+          "new_unique_listings": 20,
+          "new_unique_projects": 13,
+          "new_qualified_listings": 20,
+          "filters_verified": true
+        },
+        {
+          "page": 2,
+          "results_seen": 20,
+          "new_unique_listings": 20,
+          "new_unique_projects": 9,
+          "new_qualified_listings": 20,
+          "filters_verified": true
+        }
+      ],
+      "terminal_reason": "hard_cap_with_reason",
+      "notes": "作为市区交通成熟度对照，2页覆盖22个项目；更高租金项目将通过固定总成本门槛复核。"
+    },
+    {
+      "run_id": "search_880a4b5c4c9a",
+      "source_key": "beike",
+      "source_role": "primary_discovery",
+      "lane": "project_lookup",
+      "query": "由谷产业园",
+      "area": "闵行浦江镇",
+      "url": "https://shangye.ke.com/sh/xzl_rent.html?query_content=%E7%94%B1%E8%B0%B7%E4%BA%A7%E4%B8%9A%E5%9B%AD",
+      "evidence_ref": "evidence/browser_extracts/beike_collection_summary.json",
+      "started_at": "2026-08-10T21:19:53+08:00",
+      "completed_at": "2026-08-10T21:19:53+08:00",
+      "pages_examined": 1,
+      "results_seen": 12,
+      "new_unique_listings": 12,
+      "new_unique_projects": 1,
+      "consecutive_low_novelty_pages": 0,
+      "page_metrics": [
+        {
+          "page": 1,
+          "results_seen": 12,
+          "new_unique_listings": 12,
+          "new_unique_projects": 1,
+          "new_qualified_listings": 3
+        }
+      ],
+      "terminal_reason": "no_next_page",
+      "notes": "项目名反查，列表不足一页。"
+    },
+    {
+      "run_id": "search_2eb96c76c933",
+      "source_key": "beike",
+      "source_role": "primary_discovery",
+      "lane": "project_lookup",
+      "query": "乐工坊",
+      "area": "闵行浦江镇",
+      "url": "https://shangye.ke.com/sh/xzl_rent.html?query_content=%E4%B9%90%E5%B7%A5%E5%9D%8A",
+      "evidence_ref": "evidence/browser_extracts/beike_collection_summary.json",
+      "started_at": "2026-08-10T21:19:56+08:00",
+      "completed_at": "2026-08-10T21:19:56+08:00",
+      "pages_examined": 1,
+      "results_seen": 7,
+      "new_unique_listings": 7,
+      "new_unique_projects": 1,
+      "consecutive_low_novelty_pages": 0,
+      "page_metrics": [
+        {
+          "page": 1,
+          "results_seen": 7,
+          "new_unique_listings": 7,
+          "new_unique_projects": 1,
+          "new_qualified_listings": 5
+        }
+      ],
+      "terminal_reason": "no_next_page",
+      "notes": "项目名反查，列表不足一页。"
+    },
+    {
+      "run_id": "search_7fdce782cd64",
+      "source_key": "beike",
+      "source_role": "primary_discovery",
+      "lane": "project_lookup",
+      "query": "万科VMO花园广场",
+      "area": "闵行浦江镇",
+      "url": "https://shangye.ke.com/sh/xzl_rent.html?query_content=%E4%B8%87%E7%A7%91VMO%E8%8A%B1%E5%9B%AD%E5%B9%BF%E5%9C%BA",
+      "evidence_ref": "evidence/browser_extracts/beike_collection_summary.json",
+      "started_at": "2026-08-10T21:20:01+08:00",
+      "completed_at": "2026-08-10T21:20:01+08:00",
+      "pages_examined": 1,
+      "results_seen": 4,
+      "new_unique_listings": 4,
+      "new_unique_projects": 1,
+      "consecutive_low_novelty_pages": 0,
+      "page_metrics": [
+        {
+          "page": 1,
+          "results_seen": 4,
+          "new_unique_listings": 4,
+          "new_unique_projects": 1,
+          "new_qualified_listings": 1
+        }
+      ],
+      "terminal_reason": "no_next_page",
+      "notes": "项目名反查，列表不足一页。"
+    },
+    {
+      "run_id": "search_2766762f733c",
+      "source_key": "anjuke",
+      "source_role": "broad_discovery",
+      "lane": "project_lookup",
+      "query": "由谷产业园",
+      "area": "闵行浦江",
+      "url": "https://sh.sydc.anjuke.com/xzl-zu/?kw=%E7%94%B1%E8%B0%B7%E4%BA%A7%E4%B8%9A%E5%9B%AD",
+      "evidence_ref": "evidence/browser_extracts/anjuke_project_searches.json",
+      "started_at": "2026-08-10T21:29:31+08:00",
+      "completed_at": "2026-08-10T21:29:31+08:00",
+      "pages_examined": 1,
+      "results_seen": 2,
+      "new_unique_listings": 2,
+      "new_unique_projects": 1,
+      "consecutive_low_novelty_pages": 0,
+      "page_metrics": [
+        {
+          "page": 1,
+          "results_seen": 2,
+          "new_unique_listings": 2,
+          "new_unique_projects": 1,
+          "new_qualified_listings": 2
+        }
+      ],
+      "terminal_reason": "no_next_page",
+      "notes": "取得170㎡与132.5㎡广告；平台为补漏源，固定总成本仍待核验。"
+    },
+    {
+      "run_id": "search_a2bcebc22e10",
+      "source_key": "anjuke",
+      "source_role": "broad_discovery",
+      "lane": "project_lookup",
+      "query": "乐工坊",
+      "area": "闵行浦江",
+      "url": "https://sh.sydc.anjuke.com/xzl-zu/?kw=%E4%B9%90%E5%B7%A5%E5%9D%8A",
+      "evidence_ref": "evidence/browser_extracts/anjuke_project_searches.json",
+      "started_at": "2026-08-10T21:29:46+08:00",
+      "completed_at": "2026-08-10T21:29:46+08:00",
+      "pages_examined": 1,
+      "results_seen": 1,
+      "new_unique_listings": 1,
+      "new_unique_projects": 1,
+      "consecutive_low_novelty_pages": 0,
+      "page_metrics": [
+        {
+          "page": 1,
+          "results_seen": 1,
+          "new_unique_listings": 1,
+          "new_unique_projects": 1,
+          "new_qualified_listings": 1
+        }
+      ],
+      "terminal_reason": "no_next_page",
+      "notes": "仅取得71㎡广告，面积不符；项目名称与页面楼盘名存在语义差异。"
+    },
+    {
+      "run_id": "search_412cabfbaaf1",
+      "source_key": "anjuke",
+      "source_role": "broad_discovery",
+      "lane": "project_lookup",
+      "query": "万科VMO花园广场",
+      "area": "闵行浦江",
+      "url": "https://sh.sydc.anjuke.com/xzl-zu/?kw=%E4%B8%87%E7%A7%91VMO%E8%8A%B1%E5%9B%AD%E5%B9%BF%E5%9C%BA",
+      "evidence_ref": "evidence/browser_extracts/anjuke_project_searches.json",
+      "started_at": "2026-08-10T21:29:53+08:00",
+      "completed_at": "2026-08-10T21:29:53+08:00",
+      "pages_examined": 1,
+      "results_seen": 0,
+      "new_unique_listings": 0,
+      "new_unique_projects": 0,
+      "consecutive_low_novelty_pages": 0,
+      "page_metrics": [
+        {
+          "page": 1,
+          "results_seen": 0,
+          "new_unique_listings": 0,
+          "new_unique_projects": 0,
+          "new_qualified_listings": 0
+        }
+      ],
+      "terminal_reason": "zero_results",
+      "notes": "关键词结果为外区厂房，与目标项目不符，按适用结果零条记录。"
+    },
+    {
+      "run_id": "search_c0ddbe6f65a0",
+      "source_key": "anjuke",
+      "source_role": "broad_discovery",
+      "lane": "project_lookup",
+      "query": "海洋石油大厦",
+      "area": "徐汇万体馆",
+      "url": "https://sh.sydc.anjuke.com/xzl-zu/?kw=%E6%B5%B7%E6%B4%8B%E7%9F%B3%E6%B2%B9%E5%A4%A7%E5%8E%A6",
+      "evidence_ref": "evidence/browser_extracts/anjuke_project_searches.json",
+      "started_at": "2026-08-10T21:29:58+08:00",
+      "completed_at": "2026-08-10T21:29:58+08:00",
+      "pages_examined": 1,
+      "results_seen": 2,
+      "new_unique_listings": 2,
+      "new_unique_projects": 1,
+      "consecutive_low_novelty_pages": 0,
+      "page_metrics": [
+        {
+          "page": 1,
+          "results_seen": 2,
+          "new_unique_listings": 2,
+          "new_unique_projects": 1,
+          "new_qualified_listings": 2
+        }
+      ],
+      "terminal_reason": "no_next_page",
+      "notes": "取得项目级独立空调、行业不限等线索；具体120㎡单元仍待对应。"
+    },
+    {
+      "run_id": "search_d4ee188115fe",
+      "source_key": "anjuke",
+      "source_role": "broad_discovery",
+      "lane": "project_lookup",
+      "query": "光大会展中心",
+      "area": "徐汇漕宝路",
+      "url": "https://sh.sydc.anjuke.com/xzl-zu/?kw=%E5%85%89%E5%A4%A7%E4%BC%9A%E5%B1%95%E4%B8%AD%E5%BF%83",
+      "evidence_ref": "evidence/browser_extracts/anjuke_project_searches.json",
+      "started_at": "2026-08-10T21:30:01+08:00",
+      "completed_at": "2026-08-10T21:30:01+08:00",
+      "pages_examined": 1,
+      "results_seen": 2,
+      "new_unique_listings": 2,
+      "new_unique_projects": 1,
+      "consecutive_low_novelty_pages": 0,
+      "page_metrics": [
+        {
+          "page": 1,
+          "results_seen": 2,
+          "new_unique_listings": 2,
+          "new_unique_projects": 1,
+          "new_qualified_listings": 2
+        }
+      ],
+      "terminal_reason": "no_next_page",
+      "notes": "取得150㎡与60-100㎡广告，可用于项目和价格交叉核验。"
+    },
+    {
+      "run_id": "search_f2a125556883",
+      "source_key": "anjuke",
+      "source_role": "broad_discovery",
+      "lane": "project_lookup",
+      "query": "旭辉世纪广场",
+      "area": "普陀",
+      "url": "https://sh.sydc.anjuke.com/xzl-zu/?kw=%E6%97%AD%E8%BE%89%E4%B8%96%E7%BA%AA%E5%B9%BF%E5%9C%BA",
+      "evidence_ref": "evidence/browser_extracts/anjuke_project_searches.json",
+      "started_at": "2026-08-10T21:30:04+08:00",
+      "completed_at": "2026-08-10T21:30:04+08:00",
+      "pages_examined": 1,
+      "results_seen": 0,
+      "new_unique_listings": 0,
+      "new_unique_projects": 0,
+      "consecutive_low_novelty_pages": 0,
+      "page_metrics": [
+        {
+          "page": 1,
+          "results_seen": 0,
+          "new_unique_listings": 0,
+          "new_unique_projects": 0,
+          "new_qualified_listings": 0
+        }
+      ],
+      "terminal_reason": "zero_results",
+      "notes": "关键词结果为外区厂房，与目标项目不符，按适用结果零条记录。"
+    },
+    {
+      "run_id": "search_b531c69a877c",
+      "source_key": "lezu",
+      "source_role": "broad_discovery",
+      "lane": "project_lookup",
+      "query": "由谷科技产业园",
+      "area": "闵行浦江",
+      "url": "https://www.lezubangong.com/loupan/l729",
+      "evidence_ref": "evidence/browser_extracts/lezu_yougu_project.json",
+      "started_at": "2026-08-10T22:25:28+08:00",
+      "completed_at": "2026-08-10T22:25:28+08:00",
+      "pages_examined": 1,
+      "results_seen": 13,
+      "new_unique_listings": 1,
+      "new_unique_projects": 1,
+      "consecutive_low_novelty_pages": 0,
+      "page_metrics": [
+        {
+          "page": 1,
+          "results_seen": 13,
+          "new_unique_listings": 1,
+          "new_unique_projects": 1,
+          "new_qualified_listings": 4
+        }
+      ],
+      "terminal_reason": "no_next_page",
+      "notes": "项目页核验13套，其中4套面积与裸租金落入目标范围；物业费为空，未导入为具体单元，保留项目级交叉证据"
+    },
+    {
+      "run_id": "search_495cd3f8fa41",
+      "source_key": "anjuke",
+      "source_role": "broad_discovery",
+      "lane": "comparison_area",
+      "query": "漕宝路商铺100-200平方米",
+      "area": "漕宝路",
+      "url": "https://sh.sydc.anjuke.com/sp-zu/mj4/?kw=%E6%BC%95%E5%AE%9D%E8%B7%AF",
+      "evidence_ref": "evidence/browser_extracts/anjuke_shop_scope_stop.json",
+      "started_at": "2026-08-10T22:25:28+08:00",
+      "completed_at": "2026-08-10T22:25:28+08:00",
+      "pages_examined": 1,
+      "results_seen": 9,
+      "new_unique_listings": 3,
+      "new_unique_projects": 3,
+      "consecutive_low_novelty_pages": 0,
+      "page_metrics": [
+        {
+          "page": 1,
+          "results_seen": 9,
+          "new_unique_listings": 3,
+          "new_unique_projects": 3,
+          "new_qualified_listings": 0
+        }
+      ],
+      "terminal_reason": "hard_cap_with_reason",
+      "notes": "用户明确表示商铺不合适并要求优先写字楼，停止继续扩展商铺来源；样本仅用于说明商铺固定费用与转让费风险"
+    }
+  ]
+}
