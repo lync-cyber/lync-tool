@@ -72,7 +72,7 @@ function Show-Banner {
     param([Parameter(Mandatory)]$Config)
     try { Clear-Host -ErrorAction Stop } catch { }
     Write-Host 'Codex 开发环境助手' -ForegroundColor Cyan
-    $modeText = if ($Config.environmentMode -eq 'WslFirst') { "WSL2 $($Config.wsl.distribution)" } else { 'Windows Native' }
+    $modeText = if ($Config.environmentMode -eq 'WslFirst') { "WSL2 $($Config.wsl.distribution)" } else { 'Windows 原生开发环境' }
     Write-Host "目标环境：$modeText  ·  v$scriptVersion" -ForegroundColor White
     Write-Host ('=' * 72) -ForegroundColor DarkGray
     Write-Host ''
@@ -92,12 +92,12 @@ function Show-MainMenu {
     Write-Host '  [5] 撤销上次设置'
     Write-Host '      查看并恢复本工具上一次更改'
     Write-Host '  [6] Codex Desktop 设置指南'
-    Write-Host '      查看 Desktop 设置和重启验收步骤'
+    Write-Host '      查看 Codex Desktop 设置和重启验证步骤'
     if ($Config.environmentMode -eq 'WslFirst') {
         Write-Host '  [7] 完整检查 WSL 环境'
         Write-Host '      启动 Ubuntu 并检查 Linux 工具链'
     }
-    Write-Host '  [R] 刷新检测结果'
+    Write-Host '  [R] 重新检查'
     Write-Host '  [0] 退出'
 }
 
@@ -109,7 +109,7 @@ function Open-CodexSettingsGuide {
     $index = 1
     foreach ($item in $checklist.items) { Write-Host "  $index. $item"; $index++ }
     try { Start-Process 'codex://settings' -ErrorAction Stop }
-    catch { Write-SetupStatus -Kind Warning -Message '无法自动打开 codex://settings，请在 Codex Desktop 左下角手动打开 Settings。' }
+    catch { Write-SetupStatus -Kind Warning -Message '无法自动打开 Codex 设置。请在 Codex Desktop 左下角打开“设置”。' }
 }
 
 function Get-RecentRollbackManifest {
@@ -189,34 +189,36 @@ function Get-CachedSetupDetection {
     return $detection
 }
 
-function Get-DisplayProperty {
-    param(
-        [AllowNull()]$InputObject,
-        [Parameter(Mandatory)][string]$Name,
-        $DefaultValue = $null
-    )
-    if ($null -ne $InputObject) {
-        $property = $InputObject.PSObject.Properties[$Name]
-        if ($null -ne $property -and $null -ne $property.Value) { return $property.Value }
-    }
-    return $DefaultValue
-}
-
 function Get-IssueDisplayText {
     param([AllowNull()]$Issue)
     if ($null -eq $Issue) { return $null }
     if ($Issue -is [string]) { return $Issue }
-    $errorText = Get-DisplayProperty -InputObject $Issue -Name 'error'
-    $issueName = Get-DisplayProperty -InputObject $Issue -Name 'name'
+    $errorText = Get-SetupProperty -InputObject $Issue -Name 'error'
+    $issueName = Get-SetupProperty -InputObject $Issue -Name 'name'
     if (-not [string]::IsNullOrWhiteSpace([string]$errorText)) {
         if (-not [string]::IsNullOrWhiteSpace([string]$issueName)) { return "$issueName：$errorText" }
         return [string]$errorText
     }
     foreach ($name in @('message', 'title', 'name', 'tool', 'code')) {
-        $value = Get-DisplayProperty -InputObject $Issue -Name $name
+        $value = Get-SetupProperty -InputObject $Issue -Name $name
         if (-not [string]::IsNullOrWhiteSpace([string]$value)) { return [string]$value }
     }
     return [string]$Issue
+}
+
+function Get-RemainingSetupPlan {
+    param(
+        [Parameter(Mandatory)]$Plan,
+        [AllowNull()]$Results
+    )
+    $completedIds = @($Results | Where-Object {
+        (Get-SetupProperty -InputObject $_ -Name 'status' -Default '') -in @('Changed', 'NoChange')
+    } | ForEach-Object {
+        Get-SetupProperty -InputObject $_ -Name 'id' -Default ''
+    } | Where-Object { $_ } | Select-Object -Unique)
+    $remaining = $Plan.PSObject.Copy()
+    $remaining.actions = @($Plan.actions | Where-Object { $_.id -notin $completedIds })
+    return $remaining
 }
 
 function New-WorkflowMachineResult {
@@ -228,12 +230,13 @@ function New-WorkflowMachineResult {
     $summary = Get-CodexSetupResultSummary -Results $WorkflowResult.results
     $remainingActions = @(
         if ($null -ne $WorkflowResult.remainingPlan) {
-            Get-DisplayProperty -InputObject $WorkflowResult.remainingPlan -Name 'actions' -DefaultValue @()
+            Get-SetupProperty -InputObject $WorkflowResult.remainingPlan -Name 'actions' -Default @()
         }
     )
     $completionPlan = if ($null -ne $WorkflowResult.remainingPlan) { $WorkflowResult.remainingPlan } else { $WorkflowResult.plan }
-    $blockingReasons = @(Get-DisplayProperty -InputObject $completionPlan -Name 'blockingReasons' -DefaultValue @())
-    $issues = @(Get-DisplayProperty -InputObject $(if ($null -ne $WorkflowResult.verificationDetection) { $WorkflowResult.verificationDetection } else { $WorkflowResult.detection }) -Name 'issues' -DefaultValue @())
+    $blockingReasons = @(Get-SetupProperty -InputObject $completionPlan -Name 'blockingReasons' -Default @())
+    $warnings = @(Get-SetupProperty -InputObject $completionPlan -Name 'warnings' -Default @())
+    $issues = @(Get-SetupProperty -InputObject $WorkflowResult.detection -Name 'issues' -Default @())
     $exitCode = if ($summary.failed -gt 0 -or $summary.unknown -gt 0) {
         1
     }
@@ -282,19 +285,18 @@ function New-WorkflowMachineResult {
         plan = $WorkflowResult.plan
         results = @($WorkflowResult.results)
         remainingPlan = $WorkflowResult.remainingPlan
-        verificationDetection = $WorkflowResult.verificationDetection
         blockingReasons = @($blockingReasons)
         remainingActions = @($remainingActions | ForEach-Object {
             [ordered]@{
-                id = [string](Get-DisplayProperty -InputObject $_ -Name 'id' -DefaultValue '')
-                type = [string](Get-DisplayProperty -InputObject $_ -Name 'type' -DefaultValue '')
-                target = [string](Get-DisplayProperty -InputObject $_ -Name 'target' -DefaultValue '')
+                id = [string](Get-SetupProperty -InputObject $_ -Name 'id' -Default '')
+                type = [string](Get-SetupProperty -InputObject $_ -Name 'type' -Default '')
+                target = [string](Get-SetupProperty -InputObject $_ -Name 'target' -Default '')
             }
         })
         issues = @($issues | ForEach-Object {
             [ordered]@{
-                name = [string](Get-DisplayProperty -InputObject $_ -Name 'name' -DefaultValue '检测')
-                error = [string](Get-DisplayProperty -InputObject $_ -Name 'error' -DefaultValue '')
+                name = [string](Get-SetupProperty -InputObject $_ -Name 'name' -Default '检测')
+                error = [string](Get-SetupProperty -InputObject $_ -Name 'error' -Default '')
             }
         })
         desktopEvidenceRequired = $true
@@ -338,78 +340,69 @@ function Invoke-ReportShortcut {
 function Show-WorkflowCompletion {
     param([Parameter(Mandatory)]$WorkflowResult)
 
-    $workflowConfig = Get-DisplayProperty -InputObject $WorkflowResult -Name 'config'
-    $verificationDetection = Get-DisplayProperty -InputObject $WorkflowResult -Name 'verificationDetection'
-    $detection = if ($null -ne $verificationDetection) { $verificationDetection } else { $WorkflowResult.detection }
-    $score = [int](Get-DisplayProperty -InputObject $detection -Name 'healthScore' -DefaultValue 0)
-    $healthLabel = [string](Get-DisplayProperty -InputObject $detection -Name 'healthLabel' -DefaultValue '未评级')
-    $mode = [string](Get-DisplayProperty -InputObject $detection -Name 'detectionMode' -DefaultValue $(if ($WorkflowResult.deepDetection) { '完整' } else { '快速' }))
-    $issues = @(Get-DisplayProperty -InputObject $detection -Name 'issues' -DefaultValue @())
-    $pathInfo = Get-DisplayProperty -InputObject $detection -Name 'path'
-    $wslToolInfo = Get-DisplayProperty -InputObject $detection -Name 'wslTools'
+    $workflowConfig = Get-SetupProperty -InputObject $WorkflowResult -Name 'config'
+    $detection = $WorkflowResult.detection
+    $score = [int](Get-SetupProperty -InputObject $detection -Name 'healthScore' -Default 0)
+    $healthLabel = [string](Get-SetupProperty -InputObject $detection -Name 'healthLabel' -Default '未评级')
+    $mode = [string](Get-SetupProperty -InputObject $detection -Name 'detectionMode' -Default $(if ($WorkflowResult.deepDetection) { '完整' } else { '快速' }))
+    $issues = @(Get-SetupProperty -InputObject $detection -Name 'issues' -Default @())
+    $pathInfo = Get-SetupProperty -InputObject $detection -Name 'path'
+    $wslToolInfo = Get-SetupProperty -InputObject $detection -Name 'wslTools'
     $conflicts = @(
         if ($workflowConfig.environmentMode -eq 'WslFirst') {
-            Get-DisplayProperty -InputObject $wslToolInfo -Name 'nonNativeCommands' -DefaultValue @()
+            Get-SetupProperty -InputObject $wslToolInfo -Name 'nonNativeCommands' -Default @()
         }
         else {
-            Get-DisplayProperty -InputObject $pathInfo -Name 'conflicts' -DefaultValue @()
+            Get-SetupProperty -InputObject $pathInfo -Name 'conflicts' -Default @()
         }
     )
-    $actions = @(Get-DisplayProperty -InputObject $WorkflowResult.plan -Name 'actions' -DefaultValue @())
-    $remainingPlan = Get-DisplayProperty -InputObject $WorkflowResult -Name 'remainingPlan'
+    $actions = @(Get-SetupProperty -InputObject $WorkflowResult.plan -Name 'actions' -Default @())
+    $remainingPlan = Get-SetupProperty -InputObject $WorkflowResult -Name 'remainingPlan'
     $completionPlan = if ($null -ne $remainingPlan) { $remainingPlan } else { $WorkflowResult.plan }
-    $blockingReasons = @(Get-DisplayProperty -InputObject $completionPlan -Name 'blockingReasons' -DefaultValue @())
+    $blockingReasons = @(Get-SetupProperty -InputObject $completionPlan -Name 'blockingReasons' -Default @())
     $remainingActions = @(
         if ($null -ne $remainingPlan) {
-            Get-DisplayProperty -InputObject $remainingPlan -Name 'actions' -DefaultValue @()
+            Get-SetupProperty -InputObject $remainingPlan -Name 'actions' -Default @()
         }
         else {
             $actions
         }
     )
     $resultSummary = Get-CodexSetupResultSummary -Results $WorkflowResult.results
-    $remainingSetupCount = @($remainingActions | Where-Object {
-        (Get-DisplayProperty -InputObject $_ -Name 'type' -DefaultValue '') -ne 'WingetUpgradeCheck'
-    }).Count
-    $remainingCheckCount = $remainingActions.Count - $remainingSetupCount
+    $remainingSetupCount = $remainingActions.Count
 
     Write-Host ''
-    $isProjectWorkflow = (Get-DisplayProperty -InputObject $WorkflowResult -Name 'workflowMode' -DefaultValue '') -eq 'ProjectInit'
-    $completionTitle = if ($WorkflowResult.whatIfRun -and $blockingReasons.Count -eq 0) { '预览完成' } elseif ($resultSummary.failed -gt 0) { '操作未完全完成' } elseif ($blockingReasons.Count -gt 0) { '操作已结束，仍有待处理项' } elseif ($resultSummary.restartRequired -gt 0) { '需要重启后继续' } elseif ($resultSummary.needsAttention -gt 0 -or $resultSummary.skipped -gt 0 -or $remainingSetupCount -gt 0) { '操作已结束，仍有待处理项' } elseif ($resultSummary.total -eq 0) { '没有需要执行的操作' } else { '目标状态已确认' }
+    $isProjectWorkflow = (Get-SetupProperty -InputObject $WorkflowResult -Name 'workflowMode' -Default '') -eq 'ProjectInit'
+    $completionTitle = if ($WorkflowResult.whatIfRun -and $blockingReasons.Count -eq 0) { '预览完成' } elseif ($resultSummary.failed -gt 0) { '操作未完全完成' } elseif ($blockingReasons.Count -gt 0) { '操作已结束，仍有待处理项' } elseif ($resultSummary.restartRequired -gt 0) { '需要重启后继续' } elseif ($resultSummary.needsAttention -gt 0 -or $resultSummary.skipped -gt 0 -or $remainingSetupCount -gt 0) { '操作已结束，仍有待处理项' } elseif ($resultSummary.total -eq 0) { '没有需要执行的操作' } else { '设置完成' }
     $completionColor = if ($resultSummary.failed -gt 0) { 'Red' } elseif ($WorkflowResult.whatIfRun -or $blockingReasons.Count -gt 0 -or $resultSummary.restartRequired -gt 0 -or $resultSummary.needsAttention -gt 0 -or $resultSummary.skipped -gt 0 -or $remainingSetupCount -gt 0) { 'Yellow' } else { 'Green' }
     Write-Host $completionTitle -ForegroundColor $completionColor
     Write-Host ('─' * 48) -ForegroundColor DarkGray
-    $wslReadiness = [string](Get-DisplayProperty -InputObject $wslToolInfo -Name 'readiness' -DefaultValue 'Unknown')
+    $wslReadiness = [string](Get-SetupProperty -InputObject $wslToolInfo -Name 'readiness' -Default 'Unknown')
     if ($workflowConfig.environmentMode -eq 'WslFirst' -and $wslReadiness -eq 'Unknown') {
-        Write-Host '核心环境可用性：尚未完整检查'
+        Write-Host '环境状态：尚未完整检查'
     }
-    else { Write-Host "核心环境可用性：$healthLabel（$score/100）" }
+    else { Write-Host "环境状态：$healthLabel（$score/100）" }
     Write-Host "检查范围：$mode"
-    if ($remainingActions.Count -eq 0) {
-        Write-Host '仍可继续处理：无'
-    }
-    else {
-        $visibleActions = @($remainingActions | ForEach-Object { Get-DisplayProperty -InputObject $_ -Name 'title' -DefaultValue $_.id } | Select-Object -First 3)
-        Write-Host "仍可继续处理：设置 $remainingSetupCount 项；检查或指引 $remainingCheckCount 项"
+    if ($remainingActions.Count -gt 0) {
+        $visibleActions = @($remainingActions | ForEach-Object { Get-SetupProperty -InputObject $_ -Name 'title' -Default $_.id } | Select-Object -First 3)
+        Write-Host "待处理：$remainingSetupCount 项"
         Write-Host "  · $($visibleActions -join '；')" -ForegroundColor DarkGray
         if ($remainingActions.Count -gt 3) { Write-Host "                另有 $($remainingActions.Count - 3) 项，请查看报告" -ForegroundColor DarkGray }
     }
-    if ($issues.Count -gt 0) {
+    if ($issues.Count -gt 0 -and $blockingReasons.Count -eq 0 -and $warnings.Count -eq 0) {
         $issueText = @($issues | ForEach-Object { Get-IssueDisplayText $_ } | Where-Object { $_ } | Select-Object -First 3)
         Write-Host "部分检查未完成：$($issueText -join '；')" -ForegroundColor Yellow
     }
     if ($blockingReasons.Count -gt 0) {
         Write-Host "需要先处理：$(@($blockingReasons | Select-Object -First 3) -join '；')" -ForegroundColor Yellow
     }
-    Write-Host "命令来源冲突：$($conflicts.Count) 项"
+    if ($conflicts.Count -gt 0) { Write-Host "命令冲突：$($conflicts.Count) 项" }
     if ($WorkflowResult.whatIfRun) {
-        Write-Host '系统变更：无（本次只是预览）' -ForegroundColor Yellow
+        Write-Host '预览状态：执行计划已生成' -ForegroundColor Yellow
     }
     else {
-        Write-Host "本次结果：更新 $($resultSummary.changed) 项；无需修改 $($resultSummary.noChange) 项；待处理 $($resultSummary.needsAttention) 项；需重启 $($resultSummary.restartRequired) 项；失败 $($resultSummary.failed) 项；未执行 $($resultSummary.skipped) 项" -ForegroundColor $completionColor
-        if ($null -ne $verificationDetection) {
-            Write-Host '已按目标状态重新检查；已满足的项目不会重复列出。' -ForegroundColor DarkCyan
-        }
+        $summaryText = Get-CodexSetupResultSummaryText -Summary $resultSummary
+        if ($summaryText) { Write-Host "本次结果：$summaryText" -ForegroundColor $completionColor }
     }
     Write-Host "报告：$($WorkflowResult.reportPath)" -ForegroundColor DarkGray
 
@@ -419,14 +412,14 @@ function Show-WorkflowCompletion {
         $resultSummary.failed -eq 0 -and $resultSummary.needsAttention -eq 0) {
         $projectResult = @($WorkflowResult.results | Where-Object id -eq 'ProjectTemplates' | Select-Object -First 1)
         if ($projectResult.Count -eq 1) {
-            $projectSummary = [string](Get-DisplayProperty -InputObject (Get-DisplayProperty -InputObject $projectResult[0] -Name 'detail') -Name 'summary' -DefaultValue '')
+            $projectSummary = [string](Get-SetupProperty -InputObject (Get-SetupProperty -InputObject $projectResult[0] -Name 'detail') -Name 'summary' -Default '')
             if ($projectSummary) { Write-Host "  $projectSummary" }
         }
-        Write-Host '  请检查项目根目录中的 AGENTS.md 和标准仓库文件，再使用其中列出的实际命令。'
+        Write-Host '  查看项目根目录的 AGENTS.md，并按其中命令继续。'
     }
     elseif ($WorkflowResult.whatIfRun -and $blockingReasons.Count -eq 0) {
-        Write-Host '  1. 本次只是预览，没有修改电脑。'
-        Write-Host '  2. 返回首页选择“开始设置开发环境”，再按提示确认需要的项目。'
+        Write-Host '  1. 查看上方计划和详细报告。'
+        Write-Host '  2. 返回首页选择“设置开发环境”开始执行。'
     }
     elseif ($resultSummary.restartRequired -gt 0 -and $blockingReasons.Count -eq 0) {
         $restartIds = @($WorkflowResult.results | Where-Object status -eq 'RestartRequired' | ForEach-Object id)
@@ -437,7 +430,7 @@ function Show-WorkflowCompletion {
         else {
             Write-Host '  1. 保存所有 WSL 工作并完全关闭使用 WSL 的程序。' -ForegroundColor Yellow
             Write-Host '  2. 在 Windows PowerShell 运行 wsl --shutdown。'
-            Write-Host '  3. 再次运行“开始设置开发环境”完成复核。'
+            Write-Host '  3. 再次运行“设置开发环境”完成验证。'
         }
     }
     elseif ($blockingReasons.Count -gt 0 -or $resultSummary.failed -gt 0 -or $resultSummary.needsAttention -gt 0) {
@@ -449,17 +442,21 @@ function Show-WorkflowCompletion {
         Write-Host '  2. 查看详细结果，确认是否需要返回首页继续设置。'
     }
     elseif ($remainingSetupCount -gt 0) {
-        Write-Host '  1. 复核后仍有设置未达到目标状态。' -ForegroundColor Yellow
+        Write-Host '  1. 仍有设置需要处理。' -ForegroundColor Yellow
         Write-Host '  2. 查看详细结果，处理提示后重新运行设置。'
     }
     elseif ($resultSummary.total -eq 0) {
         Write-Host '  本次没有可执行项目；请查看上方提示或详细结果。' -ForegroundColor Yellow
     }
     else {
-        $checklist = Get-CodexDesktopChecklist -Config $workflowConfig
-        $step = 1
-        foreach ($item in $checklist.items) { Write-Host "  $step. $item"; $step++ }
-        Write-Host '     Desktop 设置无法由本工具读取；以上人工确认和重启后验证不可省略。' -ForegroundColor DarkGray
+        $showDesktopChecklist = @($actions | Where-Object { $_.id -in @('CodexDesktop', 'GlobalCodexConfig', 'GlobalAgents') }).Count -gt 0
+        if ($showDesktopChecklist) {
+            $checklist = Get-CodexDesktopChecklist -Config $workflowConfig
+            $step = 1
+            foreach ($item in $checklist.items) { Write-Host "  $step. $item"; $step++ }
+            Write-Host '     请在 Codex Desktop 中确认以上设置，再重启并验证环境。' -ForegroundColor DarkGray
+        }
+        else { Write-Host '  环境已符合当前配置。' }
     }
 
     while ($true) {
@@ -500,16 +497,15 @@ function Invoke-Workflow {
             $plan.warnings = @($plan.warnings | Where-Object { [string]$_ -match '^项目' })
             $plan.information = @()
             $plan.skipped = @()
-            $plan.requiresRestart = @()
+            $plan.afterSetup = @()
         }
         Show-CodexSetupPlan -Plan $plan
         $results = @()
-        $verificationDetection = $null
         $remainingPlan = $null
         $effectiveWhatIf = -not $RealApply -or [bool]$WhatIfPreference
         if ($WorkflowMode -in @('Plan', 'Apply', 'ProjectInit')) {
             if ($effectiveWhatIf) {
-                Write-SetupStatus -Kind Info -Message '当前是预览：不会安装软件，也不会修改系统或项目文件。'
+                Write-SetupStatus -Kind Info -Message '当前为预览，下面展示执行计划。'
                 $results = @(Invoke-CodexSetupPlan -Plan $plan -Config $Config -NonInteractive:$NonInteractive -WhatIf -InformationAction SilentlyContinue)
             }
             else {
@@ -520,34 +516,11 @@ function Invoke-Workflow {
                     -ConfirmModules:($Config.preferences.moduleConfirmation -eq 'Prompt') -Confirm:$false)
             }
         }
-        if (-not $effectiveWhatIf -and @($results | Where-Object {
-            (Get-DisplayProperty -InputObject $_ -Name 'status' -DefaultValue '') -in @('Changed', 'NoChange')
-        }).Count -gt 0) {
-            Write-SetupStatus -Kind Info -Message '正在复核本次已完成的设置…'
-            $verificationDetection = Get-CachedSetupDetection -TargetProject $TargetProject `
-                -DeepDetection:($Config.environmentMode -eq 'WslFirst') -ForceRefresh:$true -Config $Config
-            $remainingPlan = Get-CodexSetupPlan -Detection $verificationDetection -Config $Config -ProjectPath $TargetProject
-            $originalActionIds = @($plan.actions | ForEach-Object { Get-DisplayProperty -InputObject $_ -Name 'id' } | Where-Object { $_ } | Select-Object -Unique)
-            $completedIds = @($results | Where-Object {
-                (Get-DisplayProperty -InputObject $_ -Name 'status' -DefaultValue '') -in @('Changed', 'NoChange')
-            } | ForEach-Object { Get-DisplayProperty -InputObject $_ -Name 'id' } | Where-Object { $_ } | Select-Object -Unique)
-            $unverifiedActionIds = @(
-                if ($Config.environmentMode -eq 'WslFirst') {
-                    if (-not $verificationDetection.wsl.distributionInstalled) { 'InstallWslDistribution' }
-                    if ($verificationDetection.wsl.defaultDistribution -ne $verificationDetection.wsl.distribution) { 'SetDefaultWslDistribution' }
-                    if (-not $verificationDetection.wslTools.environmentReady) { 'ConfigureWsl' }
-                }
-            )
-            $remainingPlan.actions = @($remainingPlan.actions | Where-Object {
-                $_.id -in $originalActionIds -and ($_.id -notin $completedIds -or $_.id -in $unverifiedActionIds)
-            })
-        }
-        if (-not $effectiveWhatIf -and $null -eq $remainingPlan -and
-            @(Get-DisplayProperty -InputObject $plan -Name 'blockingReasons' -DefaultValue @()).Count -gt 0) {
-            $remainingPlan = $plan
+        if (-not $effectiveWhatIf) {
+            $remainingPlan = Get-RemainingSetupPlan -Plan $plan -Results $results
         }
         $reportPath = New-CodexSetupReport -Detection $detection -Plan $plan -Results $results -Config $Config -WhatIfRun:$effectiveWhatIf `
-            -RemainingPlan $remainingPlan -VerificationDetection $verificationDetection
+            -RemainingPlan $remainingPlan
         Write-SetupStatus -Kind Success -Message "报告已生成：$reportPath"
         if (-not $effectiveWhatIf) {
             $script:detectionCache.Clear()
@@ -564,7 +537,6 @@ function Invoke-Workflow {
             whatIfRun=$effectiveWhatIf
             deepDetection=$DeepDetection
             remainingPlan=$remainingPlan
-            verificationDetection=$verificationDetection
             config=$Config
         }
     }
@@ -603,26 +575,26 @@ try {
                 '2' {
                     if ($firstApplyPreviewPending) {
                         $firstApplyPreviewPending = $false
-                        Write-SetupStatus -Kind Info -Message '配置要求首次设置先预览；本次不会修改系统。'
+                        Write-SetupStatus -Kind Info -Message '首次设置先展示执行计划。'
                         $workflowResult = Invoke-Workflow -Config $config -WorkflowMode Plan -TargetProject $ProjectPath -RealApply:$false -DeepDetection:$true
                         Show-WorkflowCompletion -WorkflowResult $workflowResult
                         $completionShown = $true
                         continue
                     }
-                    $confirmed = Confirm-SetupChoice -Prompt '开始设置吗？接下来会按功能逐项请你确认' -DefaultYes:$false
+                    $confirmed = Confirm-SetupChoice -Prompt '执行以上设置？后续将按模块确认' -DefaultYes:$false
                     if ($confirmed) {
                         $workflowResult = Invoke-Workflow -Config $config -WorkflowMode Apply -TargetProject $ProjectPath -RealApply:$true -DeepDetection:$true
                         Show-WorkflowCompletion -WorkflowResult $workflowResult
                         $completionShown = $true
                     }
-                    else { Write-SetupStatus -Kind Info -Message '已取消，未修改系统。' }
+                    else { Write-SetupStatus -Kind Info -Message '已取消。' }
                 }
                 '3' {
                     if ([string]::IsNullOrWhiteSpace($ProjectPath)) { $ProjectPath = Read-Host '请输入项目文件夹的完整路径' }
                     if ([string]::IsNullOrWhiteSpace($ProjectPath)) { throw '项目路径不能为空。' }
-                    $confirmed = Confirm-SetupChoice -Prompt '现在写入基础配置文件吗？已有文件会逐个请你确认' -DefaultYes:$false
+                    $confirmed = Confirm-SetupChoice -Prompt '为该项目生成基础配置？现有文件将逐项确认' -DefaultYes:$false
                     if (-not $confirmed) {
-                        Write-SetupStatus -Kind Info -Message '已取消；没有检查或写入项目文件。'
+                        Write-SetupStatus -Kind Info -Message '已取消。'
                         continue
                     }
                     $workflowResult = Invoke-Workflow -Config $config -WorkflowMode ProjectInit -TargetProject $ProjectPath -RealApply:$confirmed -DeepDetection:$confirmed
@@ -661,7 +633,7 @@ try {
             }
             if (-not $completionShown) {
                 Write-Host ''
-                [void](Read-Host '操作结束。按 Enter 返回主菜单')
+                [void](Read-Host '按 Enter 返回主菜单')
             }
         }
     }

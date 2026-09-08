@@ -29,6 +29,5 @@ if ($failures.Count -gt 0) {
 }
 
 Write-Host "PASS: parsed $($sourceFiles.Count) PowerShell files"
-& (Join-Path $PSScriptRoot 'V2Contract.Tests.ps1')
-& (Join-Path $PSScriptRoot 'windows-integration\AcceptanceContract.Tests.ps1')
-Write-Host 'All PowerShell static contract tests passed.'
+& (Join-Path $PSScriptRoot 'SetupBehavior.Tests.ps1')
+Write-Host 'All PowerShell tests passed.'

@@ -3,8 +3,7 @@
   "environmentMode": "WslFirst",
   "preferences": {
     "moduleConfirmation": "Prompt",
-    "firstRunWhatIf": false,
-    "updatePolicy": "CheckOnly"
+    "firstRunWhatIf": false
   },
   "paths": {
     "windowsProjects": "%USERPROFILE%\\source",
@@ -27,7 +26,6 @@
   },
   "wsl": {
     "distribution": "Ubuntu-24.04",
-    "ensureLatest": true,
     "installCodexCli": true,
     "installPnpm": true,
     "configureGit": true,

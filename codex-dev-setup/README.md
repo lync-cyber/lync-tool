@@ -25,7 +25,7 @@ Set-Location <工具目录>
 
 ## 阶段 1：准备 Windows 与精确的 WSL 发行版
 
-向导检查 Windows 11、PowerShell 7、Windows Terminal、WSL2 与名称精确为 `Ubuntu-24.04` 的发行版。实际应用可以执行对应的 WSL 安装、更新和默认版本设置；不会接受 WSL1，也不会把任意名称包含 Ubuntu 的发行版当作目标。
+向导检查 Windows 11、PowerShell 7、Windows Terminal、WSL2 与名称精确为 `Ubuntu-24.04` 的发行版。实际应用可以安装 WSL 发行版并设置默认 WSL2；WSL1 会作为不支持状态报告。
 
 `WslFirst` 只在 Windows 侧保留以下组件：
 
@@ -146,7 +146,7 @@ Shell 或路径错误不是权限问题。工具不会用 `danger-full-access` �
 ./tests/run-wsl-tests.sh
 ```
 
-若系统已经有 Linux 原生 PowerShell 7，可额外运行静态 PowerShell 契约测试：
+若系统已经有 Linux 原生 PowerShell 7，可额外运行 PowerShell 行为测试：
 
 ```bash
 pwsh -NoProfile -File tests/Run-All.Tests.ps1

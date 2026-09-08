@@ -1,14 +1,5 @@
 Set-StrictMode -Version Latest
 
-function Get-ActionProperty {
-    param($InputObject, [Parameter(Mandatory)][string]$Name, $Default = $null)
-    if ($null -ne $InputObject) {
-        $property = $InputObject.PSObject.Properties[$Name]
-        if ($null -ne $property) { return $property.Value }
-    }
-    return $Default
-}
-
 function New-ActionOutcome {
     param(
         [Parameter(Mandatory)][ValidateSet('Changed', 'NoChange', 'NeedsAttention', 'RestartRequired')][string]$Status,
@@ -109,44 +100,20 @@ function Install-WingetPackage {
     $installed = Get-WindowsPackageState -PackageId $packageId -Source $source -Catalog $installedCatalog
     if ($installed.installed) {
         Register-InstalledPackage -Id $packageId -Source $source -Version ([string]$installed.version)
-        return New-ActionOutcome -Status Changed -Summary '安装完成并已复核' -Data @{ installedVersion=$installed.version }
+        return New-ActionOutcome -Status Changed -Summary '安装完成并已验证' -Data @{ installedVersion=$installed.version }
     }
     Add-RollbackNote "无法确认 $packageId 的安装登记状态，因此未加入自动卸载清单。"
     return New-ActionOutcome -Status NeedsAttention -Summary '安装命令已结束，但无法确认软件已可用' -Data @{ packageId=$packageId }
 }
 
-function Test-WingetPackageUpgrade {
-    param([Parameter(Mandatory)]$Action)
-    $packageId = [string]$Action.parameters.packageId
-    $source = [string]$Action.parameters.source
-    $installedCatalog = Get-WindowsPackageCatalog
-    $installed = Get-WindowsPackageState -PackageId $packageId -Source $source -Catalog $installedCatalog
-    if ($installed.state -eq 'Unknown') {
-        return New-ActionOutcome -Status NeedsAttention -Summary '无法读取结构化软件包清单；未执行升级' -Data @{ currentVersion=$null; availableVersion=$null }
-    }
-    if (-not $installed.installed) {
-        return New-ActionOutcome -Status NeedsAttention -Summary '软件包未安装，无法检查更新' -Data @{ currentVersion=$null; availableVersion=$null }
-    }
-    New-ActionOutcome -Status NoChange -Summary "已确认安装版本 $($installed.version)；当前策略不自动升级" -Data @{ currentVersion=$installed.version; availableVersion=$null }
-}
-
-function Get-WslRuntimeSnapshot {
-    $output = @(& wsl.exe --version 2>&1 | ForEach-Object { [string]$_ })
-    $exitCode = $LASTEXITCODE
-    if ($exitCode -ne 0) { throw "无法读取 WSL 运行时版本（exit=$exitCode）。" }
-    $text = ($output -join "`n").Trim()
-    if ([string]::IsNullOrWhiteSpace($text)) { throw 'WSL 运行时版本输出为空。' }
-    [pscustomobject]@{ sha256=Get-SetupTextSha256 -Text $text; text=ConvertTo-RedactedText $text }
-}
-
-function Update-WslRuntime {
-    $before = Get-WslRuntimeSnapshot
-    Invoke-ExternalSetupCommand -Command 'wsl.exe' -Arguments @('--update') | Out-Null
-    $after = Get-WslRuntimeSnapshot
-    if ($before.sha256 -eq $after.sha256) {
-        return New-ActionOutcome -Status NoChange -Summary 'WSL 运行时已经是当前版本' -Data @{ before=$before.text; after=$after.text }
-    }
-    New-ActionOutcome -Status RestartRequired -Summary 'WSL 运行时已更新；保存 Linux 工作后关闭 WSL 再继续' -Data @{ before=$before.text; after=$after.text }
+function Set-WslDefaultDistribution {
+    param([Parameter(Mandatory)][string]$Distribution)
+    Invoke-ExternalSetupCommand -Command 'wsl.exe' -Arguments @('--set-default', $Distribution) | Out-Null
+    $registryPath = 'Registry::HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Lxss'
+    $defaultId = [string](Get-ItemPropertyValue -LiteralPath $registryPath -Name DefaultDistribution -ErrorAction Stop)
+    $defaultName = [string](Get-ItemPropertyValue -LiteralPath (Join-Path $registryPath $defaultId) -Name DistributionName -ErrorAction Stop)
+    if ($defaultName -ne $Distribution) { throw "默认 WSL 发行版仍是 $defaultName。" }
+    New-ActionOutcome -Status Changed -Summary "默认 WSL 发行版已设为 $Distribution" -Data $null
 }
 
 function Set-WslDefaultVersion2 {
@@ -185,27 +152,12 @@ function Set-PythonWithUv {
         -Data @{ interpreter=(ConvertTo-RedactedText $afterPaths[0]) }
 }
 
-function Quote-TomlString {
-    param([Parameter(Mandatory)][string]$Value)
-    return '"' + $Value.Replace('\', '\\').Replace('"', '\"') + '"'
-}
-
-function Assert-CodexConfigValues {
-    param([Parameter(Mandatory)]$Config)
-    $allowed = [ordered]@{
-        approvalPolicy=@('untrusted', 'on-request', 'never')
-        sandboxMode=@('read-only', 'workspace-write', 'danger-full-access')
-        windowsSandbox=@('unelevated', 'elevated')
-        webSearch=@('disabled', 'cached', 'indexed', 'live')
-    }
-    foreach ($entry in $allowed.GetEnumerator()) {
-        if ([string]$Config.codex.($entry.Key) -notin $entry.Value) {
-            throw "Codex 配置值无效：$($entry.Key)=$($Config.codex.($entry.Key))"
-        }
-    }
-    foreach ($name in @('checkForUpdateOnStartup', 'networkAccess')) {
-        if ($Config.codex.$name -isnot [bool]) { throw "Codex 配置必须是布尔值：$name" }
-    }
+function New-EditableLineList {
+    param([AllowEmptyString()][string]$Content)
+    $lines = [System.Collections.Generic.List[string]]::new()
+    foreach ($line in @($Content -split "`r?`n")) { [void]$lines.Add($line) }
+    while ($lines.Count -gt 0 -and -not $lines[$lines.Count - 1]) { $lines.RemoveAt($lines.Count - 1) }
+    Write-Output -NoEnumerate $lines
 }
 
 function Assert-SupportedCodexTomlShape {
@@ -234,7 +186,7 @@ function Assert-SupportedCodexTomlShape {
 
 function Set-TomlValue {
     param(
-        [Parameter(Mandatory)][System.Collections.Generic.List[string]]$Lines,
+        [Parameter(Mandatory)][AllowEmptyCollection()][AllowEmptyString()][System.Collections.Generic.List[string]]$Lines,
         [AllowEmptyString()][string]$Section,
         [Parameter(Mandatory)][string]$Key,
         [Parameter(Mandatory)][string]$Value
@@ -275,20 +227,13 @@ function Set-TomlValue {
 
 function Set-CodexGlobalConfig {
     param([Parameter(Mandatory)]$Config)
-    Assert-CodexConfigValues -Config $Config
     $path = Join-Path $env:USERPROFILE '.codex\config.toml'
     $existing = if (Test-Path -LiteralPath $path -PathType Leaf) { Get-Content -LiteralPath $path -Raw -Encoding utf8 } else { '' }
     Assert-SupportedCodexTomlShape -Content $existing
-    $lines = [System.Collections.Generic.List[string]]::new()
-    foreach ($line in @($existing -split "`r?`n")) { [void]$lines.Add($line) }
-    while ($lines.Count -gt 0 -and -not $lines[$lines.Count - 1]) { $lines.RemoveAt($lines.Count - 1) }
-    Set-TomlValue -Lines $lines -Section '' -Key 'approval_policy' -Value (Quote-TomlString ([string]$Config.codex.approvalPolicy))
-    Set-TomlValue -Lines $lines -Section '' -Key 'sandbox_mode' -Value (Quote-TomlString ([string]$Config.codex.sandboxMode))
-    Set-TomlValue -Lines $lines -Section '' -Key 'web_search' -Value (Quote-TomlString ([string]$Config.codex.webSearch))
-    Set-TomlValue -Lines $lines -Section '' -Key 'check_for_update_on_startup' -Value (($Config.codex.checkForUpdateOnStartup).ToString().ToLowerInvariant())
-    Set-TomlValue -Lines $lines -Section 'windows' -Key 'sandbox' -Value (Quote-TomlString ([string]$Config.codex.windowsSandbox))
-    Set-TomlValue -Lines $lines -Section 'windows' -Key 'sandbox_private_desktop' -Value 'true'
-    Set-TomlValue -Lines $lines -Section 'sandbox_workspace_write' -Key 'network_access' -Value (($Config.codex.networkAccess).ToString().ToLowerInvariant())
+    $lines = New-EditableLineList -Content $existing
+    foreach ($setting in @(Get-CodexConfigSettings -Config $Config)) {
+        Set-TomlValue -Lines $lines -Section $setting.section -Key $setting.key -Value $setting.value
+    }
     $changed = Set-SetupFileContent -Path $path -Content ($lines -join [Environment]::NewLine) -Description '设置 Windows Codex 用户配置' -ManagedKind CodexConfig
     New-ActionOutcome -Status $(if ($changed) { 'Changed' } else { 'NoChange' }) -Summary $(if ($changed) { 'Codex 用户配置已更新' } else { 'Codex 用户配置已是目标状态' }) -Data @{ path=$path }
 }
@@ -296,12 +241,7 @@ function Set-CodexGlobalConfig {
 function Set-GlobalAgents {
     param([Parameter(Mandatory)]$Action)
     $mode = [string]$Action.parameters.mode
-    $templateName = switch ($mode) {
-        'WslFirst' { 'AGENTS.wsl.md.template' }
-        'WindowsNative' { 'AGENTS.windows.md.template' }
-        default { throw "不支持的环境模式：$mode" }
-    }
-    $templatePath = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\templates\global\$templateName"))
+    $templatePath = Get-GlobalAgentsTemplatePath -EnvironmentMode $mode
     $content = Get-Content -LiteralPath $templatePath -Raw -Encoding utf8
     $path = Join-Path $env:USERPROFILE '.codex\AGENTS.md'
     $changed = Set-SetupFileContent -Path $path -Content $content -Description '设置 Windows Codex 全局 AGENTS.md' -ManagedKind GlobalAgents
@@ -310,7 +250,7 @@ function Set-GlobalAgents {
 
 function Set-IniValue {
     param(
-        [Parameter(Mandatory)][System.Collections.Generic.List[string]]$Lines,
+        [Parameter(Mandatory)][AllowEmptyCollection()][AllowEmptyString()][System.Collections.Generic.List[string]]$Lines,
         [Parameter(Mandatory)][string]$Section,
         [Parameter(Mandatory)][string]$Key,
         [Parameter(Mandatory)][string]$Value
@@ -372,9 +312,7 @@ function Set-WslNetworkingConfig {
     $path = Join-Path $env:USERPROFILE '.wslconfig'
     $existing = if (Test-Path -LiteralPath $path) { Get-Content -LiteralPath $path -Raw -Encoding utf8 } else { '' }
     Assert-SupportedWslConfigShape -Content $existing
-    $lines = [System.Collections.Generic.List[string]]::new()
-    foreach ($line in @($existing -split "`r?`n")) { [void]$lines.Add($line) }
-    while ($lines.Count -gt 0 -and -not $lines[$lines.Count - 1]) { $lines.RemoveAt($lines.Count - 1) }
+    $lines = New-EditableLineList -Content $existing
     Set-IniValue -Lines $lines -Section 'wsl2' -Key 'networkingMode' -Value ([string]$network.networkingMode)
     Set-IniValue -Lines $lines -Section 'wsl2' -Key 'dnsTunneling' -Value $network.dnsTunneling.ToString().ToLowerInvariant()
     Set-IniValue -Lines $lines -Section 'wsl2' -Key 'autoProxy' -Value $network.autoProxy.ToString().ToLowerInvariant()
@@ -387,14 +325,7 @@ function Set-WindowsGitBaseline {
     $path = Join-Path $env:USERPROFILE '.gitconfig'
     $git = Resolve-SetupCommandPath -Name 'git.exe' -PackageId 'Git.Git'
     if (-not $git) { throw 'Git for Windows 已登记，但无法解析 git.exe；请重新打开终端后重试。' }
-    $desired = [ordered]@{
-        'init.defaultBranch'='main'
-        'fetch.prune'='true'
-        'pull.ff'='only'
-        'core.autocrlf'='input'
-        'core.safecrlf'='warn'
-        'credential.helper'='manager'
-    }
+    $desired = Get-WindowsGitSettings
     $temporaryPath = Join-Path ([System.IO.Path]::GetTempPath()) ("codex-dev-setup-git-{0}.config" -f [guid]::NewGuid().ToString('N'))
     $previousGlobalConfig = $env:GIT_CONFIG_GLOBAL
     try {
@@ -411,6 +342,11 @@ function Set-WindowsGitBaseline {
         if (Test-Path -LiteralPath $temporaryPath -PathType Leaf) { Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue }
     }
     $changed = Set-SetupFileContent -Path $path -Content $targetContent -Description '设置 Windows Git 基线' -ManagedKind GitConfig
+    $state = Get-WindowsGitConfigState -GitPath $git -ConfigPath $path
+    if (-not $state.ready) {
+        $detail = if ($state.error) { " $($state.error)" } else { '' }
+        throw "Windows Git 基线写入后未达到目标状态。$detail"
+    }
     New-ActionOutcome -Status $(if ($changed) { 'Changed' } else { 'NoChange' }) -Summary $(if ($changed) { 'Windows Git 基线已更新' } else { 'Windows Git 基线已是目标状态' }) -Data $null
 }
 
@@ -419,9 +355,9 @@ function Select-CodexConfigurationPreset {
     while ($true) {
         Write-Host ''
         Write-Host '  选择 Codex 工作方式' -ForegroundColor Cyan
-        Write-Host '    [1/Enter] workspace-write + on-request'
-        Write-Host '    [2]       read-only + on-request'
-        Write-Host '    [3]       danger-full-access + on-request'
+        Write-Host '    [1/Enter] 标准：可修改项目文件，按需确认'
+        Write-Host '    [2]       只读：仅查看文件，按需确认'
+        Write-Host '    [3]       完全访问：可访问所有文件，按需确认'
         Write-Host '    [B]       返回'
         switch ((Read-Host '  请选择').Trim().ToUpperInvariant()) {
             { $_ -in @('', '1') } {
@@ -437,7 +373,7 @@ function Select-CodexConfigurationPreset {
                 return $true
             }
             '3' {
-                if (Confirm-SetupChoice -Prompt '确认仅用于完全可信项目？' -DefaultYes:$false) {
+                if (Confirm-SetupChoice -Prompt '仅为可信项目启用完全访问？' -DefaultYes:$false) {
                     $Config.codex.sandboxMode = 'danger-full-access'
                     $Config.codex.approvalPolicy = 'on-request'
                     $Config.codex.windowsSandbox = 'elevated'
@@ -459,7 +395,7 @@ function Invoke-WslSetup {
     $helperWsl = Convert-WindowsPathToWsl -Path $helper -ExpectedDistro $distro
     $agentsTemplateWsl = Convert-WindowsPathToWsl -Path $agentsTemplate -ExpectedDistro $distro
     $verifyScriptWsl = Convert-WindowsPathToWsl -Path $verifyScript -ExpectedDistro $distro
-    $codeRoot = Resolve-WslUserPath -Distro $distro -Path ([string]$Config.paths.wslProjects)
+    $codeRoot = [string]$Config.paths.wslProjects
     $parameters = @(
         '--code-root', $codeRoot
         '--expected-distro', $distro
@@ -482,14 +418,18 @@ function Invoke-WslSetup {
     if ([bool]$Config.toolchains.docker.enabled) { $parameters += '--verify-docker' }
 
     $prefix = @('-d', $distro, '--', 'bash', $helperWsl)
-    Invoke-ExternalSetupCommand -Command 'wsl.exe' -Arguments ($prefix + '--what-if' + $parameters) -Quiet | Out-Null
+    $preview = Invoke-SetupProcessCapture -FilePath 'wsl.exe' -Arguments ($prefix + '--what-if' + $parameters) -TimeoutSeconds 60
+    if ($preview.timedOut) { throw 'Ubuntu 配置预检超时。' }
+    if ($null -eq $preview.exitCode -or $preview.exitCode -ne 0) {
+        throw "Ubuntu 配置预检失败（$($preview.error ?? "exit=$($preview.exitCode)")）。"
+    }
     Write-Host ''
-    Write-Host "  正在 $distro 内配置 Linux 工具链。" -ForegroundColor Cyan
+    Write-Host "  正在配置 $distro 开发工具链…" -ForegroundColor Cyan
     if ($NonInteractive) {
         Invoke-ExternalSetupCommand -Command 'wsl.exe' -Arguments ($prefix + '--apply' + '--non-interactive' + $parameters) -Quiet | Out-Null
     }
     else {
-        Write-Host '  仅在缺少系统包时，Ubuntu 会直接提示输入 sudo 密码；密码不会写入文件。' -ForegroundColor DarkGray
+        Write-Host '  如需安装系统包，Ubuntu 会提示输入 sudo 密码。' -ForegroundColor DarkGray
         Invoke-InteractiveExternalSetupCommand -Command 'wsl.exe' -Arguments ($prefix + '--apply' + $parameters) | Out-Null
     }
     Add-RollbackNote 'WSL 内的软件包和用户配置不由 Windows 回滚自动删除。'
@@ -524,7 +464,7 @@ function Get-DeclaredProjectCommands {
     if (Test-Path -LiteralPath $packageJsonPath -PathType Leaf) {
         try { $packageJson = Get-Content -LiteralPath $packageJsonPath -Raw -Encoding utf8 | ConvertFrom-Json -ErrorAction Stop }
         catch { throw "package.json 无法解析：$($_.Exception.Message)" }
-        $declaredPackageManager = [string](Get-ActionProperty $packageJson 'packageManager' '')
+        $declaredPackageManager = [string](Get-SetupProperty $packageJson 'packageManager' '')
         $declaredManager = $null
         if ($declaredPackageManager) {
             if ($declaredPackageManager -notmatch '^(pnpm|npm)@[^\s]+$') {
@@ -556,7 +496,7 @@ function Get-DeclaredProjectCommands {
         elseif ($manager -eq 'npm' -and (Test-Path -LiteralPath (Join-Path $ProjectPath 'package-lock.json') -PathType Leaf)) {
             Add-DeclaredProjectCommand -Commands $commands -Label 'Setup' -Command 'npm ci'
         }
-        $scripts = Get-ActionProperty $packageJson 'scripts'
+        $scripts = Get-SetupProperty $packageJson 'scripts'
         if ($manager -and $null -ne $scripts) {
             foreach ($name in @('dev', 'test', 'lint', 'check', 'format', 'typecheck', 'build')) {
                 if ($null -ne $scripts.PSObject.Properties[$name]) {
@@ -661,15 +601,17 @@ function Set-ProjectTemplates {
 
 function Invoke-SetupAction {
     [CmdletBinding()]
-    param([Parameter(Mandatory)]$Action, [Parameter(Mandatory)]$Config, [switch]$NonInteractive)
+    param(
+        [Parameter(Mandatory)]$Action,
+        [Parameter(Mandatory)]$Config,
+        [switch]$NonInteractive
+    )
     switch ($Action.type) {
         'WingetInstall'          { Install-WingetPackage -Action $Action }
-        'WingetUpgradeCheck'     { Test-WingetPackageUpgrade -Action $Action }
         'PythonConfigure'        { Set-PythonWithUv }
-        'WslUpdate'              { Update-WslRuntime }
         'WslSetDefaultVersion2'  { Set-WslDefaultVersion2 }
-        'WslInstallDistribution' { Invoke-ExternalSetupCommand -Command 'wsl.exe' -Arguments @('--install', '--distribution', [string]$Action.parameters.distro) | Out-Null; Add-RollbackNote '不会自动注销新发行版，以免删除 Linux 数据。'; New-ActionOutcome -Status RestartRequired -Summary '发行版安装已启动；请按 Windows 提示重启后再继续' -Data $null }
-        'WslSetDefaultDistribution' { Invoke-ExternalSetupCommand -Command 'wsl.exe' -Arguments @('--set-default', [string]$Action.parameters.distro) | Out-Null; New-ActionOutcome -Status Changed -Summary '默认 WSL 发行版已设置' -Data $null }
+        'WslInstallDistribution' { Invoke-ExternalSetupCommand -Command 'wsl.exe' -Arguments @('--install', '--distribution', [string]$Action.parameters.distro) | Out-Null; Add-RollbackNote '新发行版由 Windows WSL 保留并管理。'; New-ActionOutcome -Status RestartRequired -Summary '发行版安装已启动；请按 Windows 提示重启后再继续' -Data $null }
+        'WslSetDefaultDistribution' { Set-WslDefaultDistribution -Distribution ([string]$Action.parameters.distro) }
         'WslConfigure'           { Invoke-WslSetup -Action $Action -Config $Config -NonInteractive:$NonInteractive }
         'WslNetworkConfigure'    { Set-WslNetworkingConfig -Config $Config }
         'WindowsGitConfig'       { Set-WindowsGitBaseline }
@@ -695,13 +637,13 @@ function Invoke-CodexSetupPlan {
         $runModule = $true
         if ($ConfirmModules -and -not $NonInteractive -and -not $WhatIfPreference) {
             if ($module -eq 'CodexConfig') {
-                Write-Host '[Y] 应用  [C] 自定义  [S/Enter] 跳过' -ForegroundColor DarkGray
+                Write-Host '[Y] 执行  [C] 自定义  [S/Enter] 跳过' -ForegroundColor DarkGray
                 $choice = (Read-Host '请选择').Trim().ToUpperInvariant()
                 if ($choice -eq 'C') { $runModule = Select-CodexConfigurationPreset -Config $Config }
                 elseif ($choice -notin @('Y', 'YES', '是', '确认')) { $runModule = $false }
             }
             else {
-                $runModule = Confirm-SetupChoice -Prompt "执行模块：$(Get-SetupModuleDisplayName -Module $module)？" -DefaultYes:$false
+                $runModule = Confirm-SetupChoice -Prompt "执行“$(Get-SetupModuleDisplayName -Module $module)”中的设置？" -DefaultYes:$false
             }
         }
         foreach ($action in $group) {
@@ -709,7 +651,7 @@ function Invoke-CodexSetupPlan {
             if (-not $runModule -or $dependencies.Count -gt 0) {
                 [void]$blocked.Add([string]$action.id)
                 $dependencyTitles = @($Plan.actions | Where-Object { $_.id -in $dependencies } | ForEach-Object title)
-                $reason = if ($dependencies.Count -gt 0) { "前一步尚未完成：$($dependencyTitles -join '、')" } else { '这组操作未获确认。' }
+                $reason = if ($dependencies.Count -gt 0) { "前一步尚未完成：$($dependencyTitles -join '、')" } else { '已跳过此组操作。' }
                 $results += [pscustomobject]@{ id=$action.id; module=$module; status='Skipped'; error=$reason; detail=$null; durationMs=0 }
                 continue
             }
@@ -747,11 +689,11 @@ function Invoke-CodexSetupPlan {
                 Write-Host "  [进行中] $($action.title)" -ForegroundColor Cyan
                 $detail = Invoke-SetupAction -Action $action -Config $Config -NonInteractive:$NonInteractive
                 $timer.Stop()
-                $outcomeStatus = [string](Get-ActionProperty $detail 'status' 'Changed')
+                $outcomeStatus = [string](Get-SetupProperty $detail 'status' 'Changed')
                 if ($outcomeStatus -notin @('Changed', 'NoChange', 'NeedsAttention', 'RestartRequired')) {
                     throw "操作返回了无效状态：$outcomeStatus"
                 }
-                $outcomeSummary = [string](Get-ActionProperty $detail 'summary' $action.title)
+                $outcomeSummary = [string](Get-SetupProperty $detail 'summary' $action.title)
                 switch ($outcomeStatus) {
                     'Changed' { Write-Host "  [已更新] $outcomeSummary" -ForegroundColor Green }
                     'NoChange' { Write-Host "  [无需修改] $outcomeSummary" -ForegroundColor DarkGreen }

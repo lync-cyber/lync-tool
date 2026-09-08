@@ -1,7 +1,5 @@
 # 验证说明
 
-记录日期：2026-08-24。
-
 本文只列出可以从当前仓库重新执行的检查，不保留旧版本构建机、软件版本、运行号或历史通过声明。
 
 ## WSL 原生检查
@@ -16,14 +14,12 @@
 
 - 当前执行环境为 Linux、`WSL_DISTRO_NAME` 非空且仓库在 `/home`；
 - `wsl/setup.sh`、`wsl/verify.sh` 与所有测试 Shell 脚本通过 `bash -n`；
-- `config/defaults.json` 是严格的 schema v2，默认模式和发行版正确；
-- v1 策略字段、跨环境共享、项目级个人 `config.toml` 模板和双运行时包残留不存在；
-- Windows/WSL 全局指令模板与项目命令模板包含必需约束；
-- `wsl/verify.sh` 在当前 WSL 中可以验证 Linux、发行版、`/home` 路径、Linux 原生命令、默认 `rg` 路径和 uv 管理的 Python 3.12。
+- `wsl/setup.sh` 的预览、路径检查、配置写入和文件权限；
+- `wsl/verify.sh` 的文本与 JSON 输出、Linux 原生命令和 uv 管理的 Python 3.12。
 
 该脚本不调用 PowerShell、`wsl.exe`、Git Bash 或 Windows 可执行文件。
 
-## PowerShell 静态契约
+## PowerShell 测试
 
 如果环境已经安装 Linux 原生 PowerShell 7，可额外运行：
 
@@ -31,7 +27,7 @@
 pwsh -NoProfile -File tests/Run-All.Tests.ps1
 ```
 
-这组测试解析 PowerShell 源文件并检查 v2 配置、计划与 action 的静态契约。缺少 Linux 原生 `pwsh` 时应报告跳过，不得改用 Windows PowerShell。
+这组测试解析 PowerShell 源文件，并验证配置、进程超时、计划生成、配置写入、项目命令、回滚和入口返回值。缺少 Linux 原生 `pwsh` 时应报告跳过。
 
 ## Windows 集成验收
 
@@ -67,7 +63,7 @@ pwsh -NoProfile -File ./tests/windows-integration/Invoke-DesktopChannelCheck.ps1
 Windows 验收命令通过 `\\wsl$\Ubuntu-24.04\home\<user>\codex-agent.json` 等 UNC 路径复制正向证据。负向 Windows 通道在该通道自身运行辅助脚本，保存非 Linux 结果。由于 Codex Desktop 没有公开可信的设置/通道来源 API，脚本无法机器证明 JSON 确实来自所标注通道；操作员必须核对 GUI 场景和通道来源，并显式传入 `-ConfirmManualDesktopSettings`。机器检查只覆盖 JSON 内容、绑定 nonce、时间、哈希、截图格式和进程重启。
 
 - WinGet 包检测与实际安装；
-- WSL2 更新、默认版本、精确发行版、shutdown/restart 和幂等复跑；
+- WSL2 生命周期、默认版本、精确发行版、shutdown/restart 和幂等复跑；
 - Windows 文件备份与回滚；
 - Desktop Settings 打开流程；
 - Windows Terminal、Git for Windows 与 Desktop GUI 集成。

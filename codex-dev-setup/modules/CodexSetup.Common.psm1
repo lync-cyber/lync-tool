@@ -1,5 +1,19 @@
 Set-StrictMode -Version Latest
 
+function Get-SetupProperty {
+    param(
+        [AllowNull()]$InputObject,
+        [Parameter(Mandatory)][Alias('Names')][string[]]$Name,
+        $Default = $null
+    )
+    if ($null -eq $InputObject) { return $Default }
+    foreach ($candidate in $Name) {
+        $property = $InputObject.PSObject.Properties[$candidate]
+        if ($null -ne $property -and $null -ne $property.Value) { return $property.Value }
+    }
+    return $Default
+}
+
 $script:Runtime = $null
 $script:ManagedWindowsPackages = [ordered]@{
     'GitHub.cli'                    = 'winget'
@@ -44,6 +58,117 @@ function Get-SetupTextSha256 {
     param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
     $bytes = [Text.UTF8Encoding]::new($false).GetBytes($Text)
     return ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes))).ToLowerInvariant()
+}
+
+function ConvertTo-TomlBasicString {
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Value)
+    return '"' + $Value.Replace('\', '\\').Replace('"', '\"') + '"'
+}
+
+function Get-CodexConfigSettings {
+    param([Parameter(Mandatory)]$Config)
+    return @(
+        [pscustomobject]@{ section=''; key='approval_policy'; value=(ConvertTo-TomlBasicString ([string]$Config.codex.approvalPolicy)) }
+        [pscustomobject]@{ section=''; key='sandbox_mode'; value=(ConvertTo-TomlBasicString ([string]$Config.codex.sandboxMode)) }
+        [pscustomobject]@{ section=''; key='web_search'; value=(ConvertTo-TomlBasicString ([string]$Config.codex.webSearch)) }
+        [pscustomobject]@{ section=''; key='check_for_update_on_startup'; value=$Config.codex.checkForUpdateOnStartup.ToString().ToLowerInvariant() }
+        [pscustomobject]@{ section='windows'; key='sandbox'; value=(ConvertTo-TomlBasicString ([string]$Config.codex.windowsSandbox)) }
+        [pscustomobject]@{ section='windows'; key='sandbox_private_desktop'; value='true' }
+        [pscustomobject]@{ section='sandbox_workspace_write'; key='network_access'; value=$Config.codex.networkAccess.ToString().ToLowerInvariant() }
+    )
+}
+
+function Get-CodexConfigState {
+    param([Parameter(Mandatory)]$Config)
+    $path = Join-Path $env:USERPROFILE '.codex\config.toml'
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        return [pscustomobject]@{ path=$path; ready=$false }
+    }
+
+    $values = @{}
+    $duplicates = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $section = ''
+    foreach ($line in @(Get-Content -LiteralPath $path -Encoding utf8)) {
+        if ($line -match '^\s*\[([^\]]+)\]\s*(?:#.*)?$') {
+            $section = $matches[1].Trim()
+            continue
+        }
+        if ($line -notmatch '^\s*([A-Za-z_][A-Za-z0-9_-]*)\s*=\s*(.*?)\s*(?:#.*)?$') { continue }
+        $name = "$section`0$($matches[1])"
+        if ($values.ContainsKey($name)) { [void]$duplicates.Add($name) }
+        else { $values[$name] = $matches[2].Trim() }
+    }
+
+    $ready = $true
+    foreach ($setting in @(Get-CodexConfigSettings -Config $Config)) {
+        $name = "$($setting.section)`0$($setting.key)"
+        if ($duplicates.Contains($name) -or -not $values.ContainsKey($name) -or $values[$name] -cne $setting.value) {
+            $ready = $false
+            break
+        }
+    }
+    return [pscustomobject]@{ path=$path; ready=$ready }
+}
+
+function Get-WindowsGitSettings {
+    return [ordered]@{
+        'init.defaultbranch'='main'
+        'fetch.prune'='true'
+        'pull.ff'='only'
+        'core.autocrlf'='input'
+        'core.safecrlf'='warn'
+        'credential.helper'='manager'
+    }
+}
+
+function Get-WindowsGitConfigState {
+    param(
+        [Parameter(Mandatory)][string]$GitPath,
+        [string]$ConfigPath = (Join-Path $env:USERPROFILE '.gitconfig')
+    )
+
+    $desired = Get-WindowsGitSettings
+    $keyPattern = '^(' + (($desired.Keys | ForEach-Object { [regex]::Escape([string]$_) }) -join '|') + ')$'
+    $probe = Invoke-SetupProcessCapture -FilePath $GitPath `
+        -Arguments @('config', '--file', $ConfigPath, '--get-regexp', $keyPattern) -TimeoutSeconds 10 -OutputEncoding ([Text.Encoding]::UTF8)
+    if ($probe.timedOut) {
+        return [pscustomobject]@{ path=$ConfigPath; ready=$false; error='读取 Windows Git 用户配置超时。' }
+    }
+    if ($probe.error -or $probe.exitCode -notin @(0, 1)) {
+        $detail = if ($probe.error) { $probe.error } else { "git config 退出码 $($probe.exitCode)" }
+        return [pscustomobject]@{ path=$ConfigPath; ready=$false; error="无法读取 Windows Git 用户配置：$detail" }
+    }
+
+    $actual = @{}
+    $duplicates = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($line in @($probe.output -split "`r?`n")) {
+        if ($line -notmatch '^([^\s]+)\s+(.*)$') { continue }
+        $key = [string]$matches[1]
+        if ($actual.ContainsKey($key)) { [void]$duplicates.Add($key) }
+        else { $actual[$key] = [string]$matches[2] }
+    }
+    foreach ($entry in $desired.GetEnumerator()) {
+        if ($duplicates.Contains([string]$entry.Key) -or -not $actual.ContainsKey([string]$entry.Key) -or
+            $actual[[string]$entry.Key] -cne [string]$entry.Value) {
+            return [pscustomobject]@{ path=$ConfigPath; ready=$false; error=$null }
+        }
+    }
+    return [pscustomobject]@{ path=$ConfigPath; ready=$true; error=$null }
+}
+
+function Get-GlobalAgentsTemplatePath {
+    param([Parameter(Mandatory)][ValidateSet('WslFirst', 'WindowsNative')][string]$EnvironmentMode)
+    $templateName = if ($EnvironmentMode -eq 'WslFirst') { 'AGENTS.wsl.md.template' } else { 'AGENTS.windows.md.template' }
+    return [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\templates\global\$templateName"))
+}
+
+function Get-GlobalAgentsState {
+    param([Parameter(Mandatory)][ValidateSet('WslFirst', 'WindowsNative')][string]$EnvironmentMode)
+    $path = Join-Path $env:USERPROFILE '.codex\AGENTS.md'
+    $templatePath = Get-GlobalAgentsTemplatePath -EnvironmentMode $EnvironmentMode
+    $ready = (Test-Path -LiteralPath $path -PathType Leaf) -and
+        (Get-SetupSha256 -Path $path) -eq (Get-SetupSha256 -Path $templatePath)
+    return [pscustomobject]@{ path=$path; templatePath=$templatePath; ready=$ready }
 }
 
 function Assert-SetupManagedFileTarget {
@@ -310,7 +435,9 @@ function Invoke-SetupProcessCapture {
     param(
         [Parameter(Mandatory)][string]$FilePath,
         [string[]]$Arguments = @(),
-        [ValidateRange(1, 300)][int]$TimeoutSeconds = 15
+        [ValidateRange(1, 300)][int]$TimeoutSeconds = 15,
+        [AllowNull()][Text.Encoding]$OutputEncoding,
+        [AllowNull()][string]$StandardInput
     )
 
     $timer = [Diagnostics.Stopwatch]::StartNew()
@@ -321,16 +448,25 @@ function Invoke-SetupProcessCapture {
         $startInfo.UseShellExecute = $false
         $startInfo.RedirectStandardOutput = $true
         $startInfo.RedirectStandardError = $true
+        $startInfo.RedirectStandardInput = $null -ne $StandardInput
         $startInfo.CreateNoWindow = $true
+        if ($null -ne $OutputEncoding) {
+            $startInfo.StandardOutputEncoding = $OutputEncoding
+            $startInfo.StandardErrorEncoding = $OutputEncoding
+        }
         foreach ($argument in $Arguments) { [void]$startInfo.ArgumentList.Add([string]$argument) }
 
         $process = [Diagnostics.Process]::new()
         $process.StartInfo = $startInfo
         if (-not $process.Start()) { throw "无法启动命令：$FilePath" }
+        if ($null -ne $StandardInput) {
+            $process.StandardInput.Write($StandardInput)
+            $process.StandardInput.Close()
+        }
         $stdoutTask = $process.StandardOutput.ReadToEndAsync()
         $stderrTask = $process.StandardError.ReadToEndAsync()
         if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-            try { $process.Kill($true) } catch { }
+            try { $process.Kill() } catch { }
             try { [void]$process.WaitForExit(2000) } catch { }
             $timer.Stop()
             return [pscustomobject]@{
@@ -768,10 +904,9 @@ function Assert-SetupConfiguration {
     if ($Config.schemaVersion -ne 2) { throw "不支持的配置 schemaVersion：$($Config.schemaVersion)；需要 2。" }
     Assert-SetupString $Config.environmentMode 'environmentMode' -Allowed @('WslFirst', 'WindowsNative')
 
-    Assert-SetupObjectShape $Config.preferences 'preferences' @('moduleConfirmation', 'firstRunWhatIf', 'updatePolicy')
+    Assert-SetupObjectShape $Config.preferences 'preferences' @('moduleConfirmation', 'firstRunWhatIf')
     Assert-SetupString $Config.preferences.moduleConfirmation 'preferences.moduleConfirmation' -Allowed @('Prompt', 'Never')
     Assert-SetupBoolean $Config.preferences.firstRunWhatIf 'preferences.firstRunWhatIf'
-    Assert-SetupString $Config.preferences.updatePolicy 'preferences.updatePolicy' -Allowed @('CheckOnly', 'Skip')
 
     Assert-SetupObjectShape $Config.paths 'paths' @('windowsProjects', 'wslProjects', 'projectPath')
     Assert-SetupString $Config.paths.windowsProjects 'paths.windowsProjects'
@@ -795,11 +930,11 @@ function Assert-SetupConfiguration {
     Assert-SetupBoolean $Config.codex.checkForUpdateOnStartup 'codex.checkForUpdateOnStartup'
 
     Assert-SetupObjectShape $Config.wsl 'wsl' @(
-        'distribution', 'ensureLatest', 'installCodexCli', 'installPnpm', 'configureGit',
+        'distribution', 'installCodexCli', 'installPnpm', 'configureGit',
         'packages', 'aliases', 'networking'
     )
     Assert-SetupString $Config.wsl.distribution 'wsl.distribution' -Allowed @('Ubuntu-24.04')
-    foreach ($name in @('ensureLatest', 'installCodexCli', 'installPnpm', 'configureGit')) {
+    foreach ($name in @('installCodexCli', 'installPnpm', 'configureGit')) {
         Assert-SetupBoolean $Config.wsl.$name "wsl.$name"
     }
     Test-SetupStringArray $Config.wsl.packages 'wsl.packages' '^[a-z0-9][a-z0-9+.-]*$'
@@ -1066,7 +1201,7 @@ function Get-SetupModuleDisplayName {
         Core = 'Windows 基础应用'; Git = '代码版本管理'; CodexDesktop = 'Codex Desktop'
         Node = 'Node.js 工具链'; Python = 'Python 工具链'; Docker = 'Docker'
         WSL = 'WSL/Linux 开发环境'; Network = 'WSL 网络'
-        CodexConfig = 'Codex 设置'; Project = '项目配置文件'; Updates = '软件更新检查'
+        CodexConfig = 'Codex 设置'; Project = '项目配置文件'
     }
     if ($names.ContainsKey($Module)) { return $names[$Module] }
     return $Module
@@ -1074,7 +1209,7 @@ function Get-SetupModuleDisplayName {
 
 function Get-SetupOrderedModules {
     param([AllowNull()]$Actions)
-    $preferredOrder = @('Core', 'Git', 'CodexDesktop', 'WSL', 'Node', 'Python', 'Docker', 'Network', 'CodexConfig', 'Project', 'Updates')
+    $preferredOrder = @('Core', 'Git', 'CodexDesktop', 'WSL', 'Node', 'Python', 'Docker', 'Network', 'CodexConfig', 'Project')
     $actionModules = @($Actions | ForEach-Object { $_.module } | Where-Object { $_ } | Select-Object -Unique)
     $extraModules = @($actionModules | Where-Object { $_ -notin $preferredOrder })
     return @($preferredOrder + $extraModules | Where-Object { $_ -in $actionModules })
@@ -1140,61 +1275,41 @@ function Get-WslPackageConfiguration {
     }
 }
 
-function Resolve-WslUserPath {
-    param(
-        [Parameter(Mandatory)][string]$Distro,
-        [Parameter(Mandatory)][string]$Path
-    )
-    if ($Path.StartsWith('/')) { return $Path }
-    if ($Path -ne '~' -and -not $Path.StartsWith('~/')) {
-        throw "WSL 路径必须是 ~/... 或 Linux 绝对路径：$Path"
-    }
-    $homeOutput = @(& wsl.exe -d $Distro -- bash -lc 'printf "%s" "$HOME"' 2>&1)
-    if ($LASTEXITCODE -ne 0 -or $homeOutput.Count -eq 0 -or [string]::IsNullOrWhiteSpace([string]$homeOutput[0])) {
-        throw "无法解析 $Distro 的 Linux 主目录。"
-    }
-    $linuxHome = ([string]$homeOutput[0]).Trim().TrimEnd('/')
-    return $(if ($Path -eq '~') { $linuxHome } else { "$linuxHome/$($Path.Substring(2))" })
-}
-
 function Get-CodexDesktopChecklist {
     param([Parameter(Mandatory)]$Config)
     if ($Config.environmentMode -eq 'WslFirst') {
         return [pscustomobject]@{
             items=@(
-                '打开 Codex Desktop Settings。'
-                '将 Agent environment 设置为 Windows Subsystem for Linux。'
-                '将 Integrated terminal shell 单独设置为 WSL。'
-                '完全退出并重启 Codex Desktop。'
-                '在重启后的新 Agent 任务中运行 codex-env-check。'
-                '另开一个新的 Integrated terminal，再运行一次 codex-env-check。'
-                '只有两次检查都通过，才视为 Desktop 已进入 WSL。'
-                ('全部检查通过后，从 \\wsl$\{0}\home\<user>\code 打开项目。' -f $Config.wsl.distribution)
+                '在 Codex Desktop 设置中，将 Agent environment 设为 Windows Subsystem for Linux。'
+                '将集成终端设为 WSL，然后重启 Codex Desktop。'
+                '分别在新 Agent 任务和新集成终端运行 codex-env-check。'
+                ('两次检查通过后，从 \\wsl$\{0}\home\<user>\code 打开项目。' -f $Config.wsl.distribution)
             )
             verificationCommand='codex-env-check'
         }
     }
     return [pscustomobject]@{
         items=@(
-            '打开 Codex Desktop Settings。'
-            '将 Agent environment 设置为 Windows Native。'
-            '将 Integrated terminal shell 单独设置为 PowerShell。'
-            '完全退出并重启 Codex Desktop。'
-            '在重启后的新 Agent 集成终端确认 Git、Node、Python 与 Codex 都来自 Windows 路径。'
+            '在 Codex Desktop 设置中，将 Agent environment 设为 Windows Native。'
+            '将集成终端设为 PowerShell，然后重启 Codex Desktop。'
+            '在新集成终端确认 Git、Node、Python 和 Codex 均来自 Windows 路径。'
         )
         verificationCommand='Get-Command git,node,python,codex'
     }
 }
 
 Export-ModuleMember -Function @(
-    'Initialize-SetupRuntime', 'Get-SetupRuntime', 'Write-SetupLog', 'Write-SetupStatus',
+    'Initialize-SetupRuntime', 'Get-SetupRuntime', 'Write-SetupLog', 'Write-SetupStatus', 'Get-SetupProperty',
     'Read-SetupConfig', 'Export-SetupConfig', 'Confirm-SetupChoice', 'Backup-SetupFile',
     'Set-SetupFileContent', 'Register-InstalledPackage', 'Add-RollbackNote',
     'Complete-SetupRuntime', 'ConvertTo-RedactedText', 'Get-SetupModuleDisplayName',
     'Write-SetupWrappedText', 'Get-SetupOrderedModules',
     'Write-SetupSectionHeader', 'Resolve-SetupCommandPath', 'Assert-SetupConfiguration',
-    'Get-WslPackageConfiguration', 'Resolve-WslUserPath', 'Get-CodexDesktopChecklist',
+    'Get-WslPackageConfiguration', 'Get-CodexDesktopChecklist',
     'Get-WindowsPackageCatalog', 'Get-WindowsPackageState', 'Get-SetupSha256', 'Get-SetupTextSha256', 'Write-SetupJsonAtomic',
+    'Get-CodexConfigSettings', 'Get-CodexConfigState', 'Get-WindowsGitSettings', 'Get-WindowsGitConfigState',
+    'Get-GlobalAgentsTemplatePath', 'Get-GlobalAgentsState',
+    'Invoke-SetupProcessCapture',
     'Test-ManagedWindowsPackage', 'Assert-SetupManagedFileTarget',
     'Write-RollbackManifestAtomic', 'Assert-RollbackManifestAuthentication'
 )

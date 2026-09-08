@@ -204,7 +204,6 @@ function Get-StableWslEvidence {
     if ($null -eq $Detection -or $Detection.PSObject.Properties.Name -notcontains 'wsl') { return $null }
     [ordered]@{
         state=[string]$Detection.wsl.state
-        version=[string]$Detection.wsl.version
         distribution=[string]$Detection.wsl.distribution
         distributionInstalled=[bool]$Detection.wsl.distributionInstalled
         distributionWsl2=[bool]$Detection.wsl.distributionWsl2
