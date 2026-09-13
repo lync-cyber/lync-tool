@@ -40,7 +40,7 @@ $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
 
 Assert-True ($config.schemaVersion -eq 2) 'schemaVersion must be 2.'
 Assert-True ($config.environmentMode -eq 'WslFirst') 'WslFirst must be the default mode.'
-Assert-True ($config.wsl.distribution -eq 'Ubuntu-24.04') 'The WSL distribution must be exact.'
+Assert-True ($config.wsl.distribution -eq 'latest-stable') 'The default must select the latest stable Ubuntu available in WSL.'
 Assert-True ($config.wsl.packages.Count -gt 0) 'The WSL package list must not be empty.'
 Assert-True ($config.wsl.installCodexCli -eq $true) 'Codex CLI must be installed in WSL.'
 Assert-True ($config.wsl.installPnpm -eq $true) 'pnpm must be installed in WSL.'
@@ -61,6 +61,7 @@ Import-Module (Join-Path $root 'modules/CodexSetup.Common.psm1') -Force
 $commonModule = Get-Module 'CodexSetup.Common'
 $validatedConfig = Read-SetupConfig -Path $configPath
 Assert-True ($validatedConfig.schemaVersion -eq 2) 'The strict config reader rejected the default contract.'
+$validatedConfig.wsl.distribution = 'Ubuntu-24.04' # Pin offline behavior fixtures independently of the live catalog.
 
 $pwshPath = Join-Path $PSHOME $(if ($IsWindows) { 'pwsh.exe' } else { 'pwsh' })
 $captureResult = & $commonModule {
@@ -141,7 +142,7 @@ $deepProbe = & $detectionModule {
         available=$result.available
     }
 } $validatedConfig
-Assert-True ($deepProbe.calls -eq 1 -and $deepProbe.available) 'Deep WSL inspection launched more than one probe process.'
+Assert-True ($deepProbe.calls -eq 1 -and -not $deepProbe.available) 'Deep WSL inspection must use one process and reject empty probe output.'
 Assert-True ($deepProbe.input.Contains('state:codeRoot') -and $deepProbe.input.Contains('report_tool')) `
     'Deep WSL inspection did not combine configuration and tool checks.'
 Assert-True ('~/code' -in @($deepProbe.arguments)) 'Deep WSL inspection did not let Linux resolve its configured home path.'
@@ -288,9 +289,9 @@ Assert-True (@($emptyCatalogPlan.blockingReasons | Where-Object { $_ -match 'Win
 Write-Host 'PASS: empty strict-mode package states degrade without a fatal property error'
 
 foreach ($case in @(
-    @{ State='FeatureDisabled'; Required='InstallWslDistribution'; Forbidden=@('ConfigureWsl') }
-    @{ State='NoDistribution'; Required='InstallWslDistribution'; Forbidden=@('ConfigureWsl') }
-    @{ State='TargetMissing'; Required='InstallWslDistribution'; Forbidden=@('ConfigureWsl') }
+    @{ State='FeatureDisabled'; Required='InstallWslDistribution'; Forbidden=@() }
+    @{ State='NoDistribution'; Required='InstallWslDistribution'; Forbidden=@() }
+    @{ State='TargetMissing'; Required='InstallWslDistribution'; Forbidden=@() }
     @{ State='Ready'; Required='ConfigureWsl'; Forbidden=@('InstallWslDistribution') }
     @{ State='Unknown'; Required=$null; Forbidden=@('InstallWslDistribution', 'ConfigureWsl', 'SetWsl2Default') }
     @{ State='UnsupportedWsl1'; Required=$null; Forbidden=@('InstallWslDistribution', 'ConfigureWsl', 'SetWsl2Default') }
@@ -305,6 +306,11 @@ foreach ($case in @(
     }
     foreach ($forbidden in $case.Forbidden) {
         Assert-True ($forbidden -notin $ids) "WSL state $($case.State) produced forbidden action $forbidden."
+    }
+    if ($case.State -in @('FeatureDisabled', 'NoDistribution', 'TargetMissing')) {
+        Assert-True ('ConfigureWsl' -in $ids) 'First installation must include toolchain setup in the same plan.'
+        $configureAction = @($statePlan.actions | Where-Object id -eq 'ConfigureWsl')[0]
+        Assert-True ($configureAction.dependsOn.Count -gt 0) 'Toolchain setup must wait for distribution preparation.'
     }
     Assert-True (@($statePlan.actions | Where-Object { $_.type -match 'Convert|Unregister' }).Count -eq 0) `
         "WSL state $($case.State) produced a conversion or unregister action."
@@ -457,7 +463,7 @@ function New-NewFileRollbackRecord {
         appliedSha256=(Get-SetupSha256 -Path $Path)
         backupSha256=$null
         beforeSddl=$null
-        appliedSddl=$null
+        appliedSddl=$(if ($IsWindows) { (Get-Acl -LiteralPath $Path).Sddl } else { $null })
         managedKind='ProjectTemplate'
         managedRoot=[System.IO.Path]::GetFullPath((Split-Path -Parent $Path))
         rollbackStatus='Pending'
@@ -576,3 +582,8 @@ Assert-True (-not (Test-SetupProcessExitRequired -InvocationMode Apply -WasModeE
 Write-Host 'PASS: planning blockers and entry-point exit code contracts'
 
 Write-Host 'PASS: configuration and setup behaviors'
+
+. (Join-Path $PSScriptRoot 'DetectionRegression.Tests.ps1')
+. (Join-Path $PSScriptRoot 'DistributionSelection.Tests.ps1')
+. (Join-Path $PSScriptRoot 'WorkflowRegression.Tests.ps1')
+. (Join-Path $PSScriptRoot 'ProcessCaptureRegression.Tests.ps1')

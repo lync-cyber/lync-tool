@@ -110,8 +110,8 @@ done
 export PATH="$HOME/.local/bin:$HOME/.local/share/fnm:$HOME/.local/share/pnpm:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 
 source /etc/os-release
-[[ ${ID:-} == ubuntu && ${VERSION_ID:-} == 24.04 ]] || {
-  printf 'PowerShell setup requires Ubuntu 24.04, got %s %s.\n' "${ID:-unknown}" "${VERSION_ID:-unknown}" >&2
+[[ $expected_distro =~ ^Ubuntu-[0-9]{2}\.(04|10)$ && ${ID:-} == ubuntu && ${VERSION_ID:-} == "${expected_distro#Ubuntu-}" ]] || {
+  printf 'Setup requires the configured %s OS, got %s %s.\n' "$expected_distro" "${ID:-unknown}" "${VERSION_ID:-unknown}" >&2
   exit 1
 }
 
@@ -377,7 +377,8 @@ if ! has_linux_command pwsh; then
     run sudo apt-get update
     run sudo apt-get install -y powershell
   else
-    wget -q "$repository_url" -O "$repository_package"
+    wget -q --timeout=30 --tries=1 "$repository_url" -O "$repository_package" ||
+      die "Microsoft package repository is unavailable for Ubuntu ${VERSION_ID}: $repository_url. Check connectivity or select latest-lts; no older repository was substituted."
     if ((non_interactive)); then
       sudo -n dpkg -i "$repository_package"
       sudo -n apt-get update

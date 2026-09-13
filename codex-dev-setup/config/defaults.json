@@ -1,10 +1,6 @@
 {
   "schemaVersion": 2,
   "environmentMode": "WslFirst",
-  "preferences": {
-    "moduleConfirmation": "Prompt",
-    "firstRunWhatIf": false
-  },
   "paths": {
     "windowsProjects": "%USERPROFILE%\\source",
     "wslProjects": "~/code",
@@ -25,7 +21,7 @@
     "checkForUpdateOnStartup": true
   },
   "wsl": {
-    "distribution": "Ubuntu-24.04",
+    "distribution": "latest-stable",
     "installCodexCli": true,
     "installPnpm": true,
     "configureGit": true,

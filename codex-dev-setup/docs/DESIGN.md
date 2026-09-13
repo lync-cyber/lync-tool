@@ -16,6 +16,16 @@
 
 项目探测只提供证据与冲突警告，不成为第二套隐式策略。
 
+## Ubuntu 版本选择
+
+`wsl.distribution` 是版本策略的唯一配置入口：默认 `latest-stable`，可改为 `latest-lts` 或精确的 `Ubuntu-YY.MM`。命令行 `-Distribution` 先覆盖该字段。配置读取只校验形式；进入 WslFirst 工作流才解析自动选项，独立 Export、Rollback 和 WindowsNative 不访问版本目录。
+
+自动解析合并 [Canonical 正式发布元数据](https://changelogs.ubuntu.com/meta-release) 与 [微软 WSL 发行版目录](https://raw.githubusercontent.com/microsoft/WSL/master/distributions/DistributionInfo.json)：只保留 `Supported=1` 的正式 Ubuntu 版本，以及当前 Windows OS 架构存在下载项的精确发行版。`latest-lts` 再筛选 LTS，最后按版本排序。通用 `Ubuntu`、预览版和已停止支持的发布不参与自动选择；精确版本输入直接成为目标，不需要联网决定版本。
+
+每个目录请求最多 15 秒。下载或解析失败不使用猜测的默认值，而是提示重试或指定精确版本。成功后原配置对象的 `wsl.distribution` 被固定为精确名，后续检测缓存键、动作、环境验证与会话导出共用此值。源 JSON 不被改写，新进程读取原自动配置时重新解析；不额外维护跨进程缓存或另一套版本状态。
+
+现有发行版是独立安装。选定新版本可能产生安装及设置默认发行版的动作，均在计划内展示；不创建发行版升级、注销或迁移逻辑。Windows 真实机验收在 Preflight 解析并保存精确的验收配置，后续阶段和通道证据使用该版本，避免跨重启追随“最新”变化。
+
 ## 阶段流水线
 
 ```text
@@ -24,18 +34,24 @@ Detect → Plan → Confirm → Apply
 
 - Detect 只读系统、发行版、工具、项目标记与命令来源。
 - Plan 根据单一模式生成结构化动作，不根据缺失工具临时切换环境。
-- Confirm 对有副作用的模块给出目标、原因与边界。
+- Confirm 在完整计划中给出目标、原因、前置依赖和配置变更，交互执行仅统一确认一次；已有项目文件批量覆盖和全局高风险权限单独确认。
 - Apply 通过 Windows action 与 WSL helper 分工执行，每个动作在返回成功前验证自己的结果。
-- 完整环境检测由“完整检查 WSL 环境”和下一次运行显式触发，不在 Apply 结束后重复整套查询。
+- 首页仅保留开始或修复、仅检查、项目配置和更多入口，检查深度由任务选择。Apply 有实际变更后在本次运行完成一次完整验证；各模块之间不重复全量查询。结果页可继续修复、重新检查或显式停止 WSL 后验证，无需退出工具。
 - Desktop 人工设置和重启后的真实 Agent 由独立验收步骤确认。
 
 任何非关键失败都会被记录，依赖该结果的动作停止；不会把 unknown 当作 missing 后盲目安装。
 
+首次安装计划同时包含发行版准备和依赖它的工具链配置。安装返回后根据真实退出码和发行版状态继续；不再无条件报告需要重启。WSL 网络重启要求在当前结果会话中保留，普通复检不清除。退出工具后的新会话重新检查真实配置，网络运行时生效仍需按指南验证，不用配置文件匹配冒充 VM 或 Desktop 验收。
+
+健康分数不参与决策，已移除任意权重评分；旧 JSON `healthScore` 字段固定为 null。界面分别显示检查是否完整、具体变更和待处理问题，避免缺工具或配置未就绪时仍给出 100 分。旧 v2 `preferences` 两个字段仅为读取既有导出文件保留，不再形成第二套确认流程；默认配置不再写入它们。
+
 ## WslFirst 边界
 
-Windows action 负责 Windows 11、WSL2、精确发行版 `Ubuntu-24.04`、Desktop、Terminal、UI Git/gh 与可选 Docker Desktop。WSL helper 是开发工具链唯一写入入口，负责 APT 软件、Linux 原生 PowerShell 7、fnm/Node、pnpm、uv/Python 3.12、Codex CLI、Git 基线、Bash PATH、全局指令与环境检查。
+Windows action 负责 Windows 11、WSL2、解析后的精确 Ubuntu 发行版、Desktop、Terminal、UI Git/gh 与可选 Docker Desktop。WSL helper 是开发工具链唯一写入入口，负责 APT 软件、Linux 原生 PowerShell 7、fnm/Node、pnpm、uv/Python 3.12、Codex CLI、Git 基线、Bash PATH、全局指令与环境检查。
 
 WSL helper 接收由配置解析器校验的包与命令参数，脚本内部不维护第二份发行版或 Windows 工具链策略。下载型安装器先进入临时目录，再执行官方脚本。每个受管文件在覆盖前备份，重复运行只替换具名管理区块。
+
+`setup.sh` 对照精确目标核验 `/etc/os-release` 的 Ubuntu 身份与 `VERSION_ID`，Microsoft 软件源地址由该实际版本生成：`https://packages.microsoft.com/config/ubuntu/<VERSION_ID>/packages-microsoft-prod.deb`。WSL 目录可安装性不等于 PowerShell 软件源可用性；Microsoft 不测试或支持 Ubuntu interim 版本，长期维护场景推荐 `latest-lts`。软件源失败按实际错误报告，不借用其他 Ubuntu 版本的仓库，也不增加自动跨版本回退。[Microsoft 安装说明](https://learn.microsoft.com/en-us/powershell/scripting/install/install-ubuntu)
 
 `CODEX_HOME` 不跨系统共享。Windows Desktop 和 Linux Codex CLI 拥有独立配置、认证、历史、缓存与全局 `AGENTS.md`。
 

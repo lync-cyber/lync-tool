@@ -231,25 +231,22 @@ function Get-CodexSetupPlan {
         elseif ($wslLifecycleState -eq 'UnsupportedWsl1') {
             $blockingReasons += "$distro 正在使用 WSL1。请迁移或重新安装为 WSL2 后重试。"
         }
-        elseif ($wslLifecycleState -eq 'FeatureDisabled') {
-            $actions += New-SetupAction -Module 'WSL' -Id 'InstallWslDistribution' -Title "启用 WSL2 并安装 $distro" -Type 'WslInstallDistribution' `
-                -Target $distro -Reason '当前 Windows WSL 可选功能尚未启用。' -Critical $true `
-                -Parameters @{ distro=$distro }
-            $information += '启用 WSL 后按 Windows 提示重启，再继续配置 Linux 工具链。'
-        }
-        elseif ($wslLifecycleState -in @('NoDistribution', 'TargetMissing', 'Ready')) {
+        elseif ($wslLifecycleState -in @('FeatureDisabled', 'NoDistribution', 'TargetMissing', 'Ready')) {
             $wslAllowsHostConfig = $true
             $prepareDependency = @()
-            if ([int](Get-SetupProperty $Detection.wsl 'defaultVersion' 0) -ne 2) {
+            if ($wslLifecycleState -eq 'Ready' -and [int](Get-SetupProperty $Detection.wsl 'defaultVersion' 0) -ne 2) {
                 $actions += New-SetupAction -Module 'WSL' -Id 'SetWsl2Default' -Title '将 WSL2 设为默认版本' -Type 'WslSetDefaultVersion2' `
                     -Target 'WSL' -Reason '新发行版必须使用 WSL2。' -DependsOn $prepareDependency
                 $prepareDependency = @('SetWsl2Default')
             }
-            if ($wslLifecycleState -in @('NoDistribution', 'TargetMissing')) {
+            if ($wslLifecycleState -ne 'Ready') {
                 $actions += New-SetupAction -Module 'WSL' -Id 'InstallWslDistribution' -Title "安装 $distro" -Type 'WslInstallDistribution' `
-                    -Target $distro -Reason '当前配置使用此发行版。' -Critical $true -DependsOn $prepareDependency `
+                    -Target $distro -Reason '启用所需 Windows 功能并安装发行版；安装完成且无需重启时继续配置工具链。' -Critical $true -DependsOn $prepareDependency `
                     -Parameters @{ distro=$distro }
                 $prepareDependency = @('InstallWslDistribution')
+                $actions += New-SetupAction -Module 'WSL' -Id 'SetWsl2Default' -Title '将 WSL2 设为默认版本' -Type 'WslSetDefaultVersion2' `
+                    -Target 'WSL' -Reason '安装完成后，将新发行版的默认版本设为 WSL2。' -DependsOn $prepareDependency
+                $prepareDependency = @('SetWsl2Default')
             }
             if ([string](Get-SetupProperty $Detection.wsl 'defaultDistribution' '') -ne $distro) {
                 $actions += New-SetupAction -Module 'WSL' -Id 'SetDefaultWslDistribution' -Title "将 $distro 设为默认发行版" -Type 'WslSetDefaultDistribution' `
@@ -258,7 +255,12 @@ function Get-CodexSetupPlan {
                 $prepareDependency = @('SetDefaultWslDistribution')
             }
 
-            if ($wslLifecycleState -eq 'Ready') {
+            if ($wslLifecycleState -ne 'Ready') {
+                $actions += New-SetupAction -Module 'WSL' -Id 'ConfigureWsl' -Title "配置 $distro 开发工具链" -Type 'WslConfigure' `
+                    -Target $distro -Reason '发行版就绪后，继续安装 Linux 开发工具并运行环境验证。' `
+                    -DependsOn $prepareDependency -Parameters @{ distro=$distro }
+            }
+            else {
                 $wslTools = Get-SetupProperty $Detection 'wslTools'
                 $wslReadiness = [string](Get-SetupProperty $wslTools 'readiness' 'Unknown')
                 if ($wslReadiness -eq 'NotReady') {
@@ -303,13 +305,14 @@ function Get-CodexSetupPlan {
     if (-not [bool](Get-SetupProperty (Get-SetupProperty $Detection 'codexConfig') 'ready' $false)) {
         $actions += New-SetupAction -Module 'CodexConfig' -Id 'GlobalCodexConfig' -Title '设置 Windows Codex 用户配置' `
             -Type 'CodexGlobalConfig' -Target '%USERPROFILE%\.codex\config.toml' `
-            -Reason '设置 Codex 的文件访问、操作确认和联网策略。' -Critical ($Config.codex.sandboxMode -eq 'danger-full-access')
+            -Reason '更新用户级文件访问、操作确认和联网策略；已有文件会先备份。' -Critical ($Config.codex.sandboxMode -eq 'danger-full-access') `
+            -Parameters @{ changes=@(Get-SetupProperty (Get-SetupProperty $Detection 'codexConfig') 'changes' @()) }
     }
     else { $skipped += 'Windows Codex 用户配置已符合当前配置' }
     if (-not [bool](Get-SetupProperty (Get-SetupProperty $Detection 'globalAgents') 'ready' $false)) {
         $actions += New-SetupAction -Module 'CodexConfig' -Id 'GlobalAgents' -Title '设置 Windows Codex 全局环境规则' `
             -Type 'GlobalAgents' -Target '%USERPROFILE%\.codex\AGENTS.md' `
-            -Reason '统一 Codex Desktop 使用的终端、路径和工具链规则。' -Parameters @{ mode=$mode }
+            -Reason '写入环境规则并备份已有文件；Desktop 的 Agent 和终端选项仍需在应用设置中选择。' -Parameters @{ mode=$mode }
     }
     else { $skipped += 'Windows Codex 全局环境规则已符合当前配置' }
 
@@ -333,7 +336,7 @@ function Get-CodexSetupPlan {
         $blockingReasons += "项目不在当前环境的项目目录中。请选择 $expectedLocation。"
     }
     elseif ([string]::IsNullOrWhiteSpace($ProjectPath)) {
-        $skipped += '未选择项目。'
+        $information += '本次仅设置全局环境；项目配置可在环境就绪后单独初始化。'
     }
 
     $recommendation = Get-SetupProperty $Detection 'project' ([pscustomobject]@{ reasons=@() })
@@ -344,7 +347,7 @@ function Get-CodexSetupPlan {
 
     [pscustomobject]@{
         createdAt = (Get-Date).ToString('o')
-        healthScore = Get-SetupProperty $Detection 'healthScore' 0
+        healthScore = $null
         healthLabel = Get-SetupProperty $Detection 'healthLabel' '未评级'
         detectionMode = Get-SetupProperty $Detection 'detectionMode' '完整'
         environmentMode = $mode
@@ -373,22 +376,32 @@ function Show-CodexSetupPlan {
     Write-Host '检查结果与执行计划' -ForegroundColor White
     Write-Host ('=' * 72) -ForegroundColor DarkGray
     Write-Host "目标环境：$($Plan.environmentLabel)"
-    if ($Plan.healthLabel -eq '尚未完整检查') { Write-Host '环境状态：尚未完整检查' }
-    else { Write-Host "环境状态：$($Plan.healthLabel)（$($Plan.healthScore)/100）" }
-    Write-Host "待执行：$(@($Plan.actions).Count) 项"
+    Write-Host "检查状态：$($Plan.healthLabel)"
+    $modules = @(Get-SetupOrderedModules -Actions $Plan.actions)
+    Write-Host "可执行计划：$($modules.Count) 个模块，$(@($Plan.actions).Count) 项变更"
     if (@($Plan.blockingReasons).Count -gt 0) {
-        Write-SetupSectionHeader -Title '必须先解决' -ForegroundColor Red
+        Write-SetupSectionHeader -Title '以下问题阻止环境全部就绪' -ForegroundColor Red
         foreach ($reason in $Plan.blockingReasons) {
             Write-SetupWrappedText -Text $reason -FirstIndent '  ! ' -ContinuationIndent '    ' -ForegroundColor Red
         }
+        if (@($Plan.actions).Count -gt 0) {
+            Write-Host '  下列变更可独立执行；它们不会自动解决上述问题。' -ForegroundColor Yellow
+        }
     }
-    $modules = @(Get-SetupOrderedModules -Actions $Plan.actions)
     for ($moduleIndex = 0; $moduleIndex -lt $modules.Count; $moduleIndex++) {
         $module = $modules[$moduleIndex]
         $groupActions = @($Plan.actions | Where-Object module -eq $module)
-        Write-SetupSectionHeader -Title ("工作步骤 {0}/{1} · {2}" -f ($moduleIndex + 1), $modules.Count, (Get-SetupModuleDisplayName $module)) -ForegroundColor Magenta
+        Write-SetupSectionHeader -Title ("模块 {0}/{1} · {2}" -f ($moduleIndex + 1), $modules.Count, (Get-SetupModuleDisplayName $module)) -ForegroundColor Magenta
         foreach ($action in $groupActions) {
             Write-Host "  - $($action.title)" -ForegroundColor $(if ($action.critical) { 'Yellow' } else { 'Gray' })
+            Write-Host "    目标：$($action.target)" -ForegroundColor DarkGray
+            foreach ($change in @(Get-SetupProperty $action.parameters 'changes' @())) {
+                Write-Host "    $($change.name)：$($change.before) → $($change.after)" -ForegroundColor DarkGray
+            }
+            if ($action.dependsOn.Count -gt 0) {
+                $dependencyTitles = @($Plan.actions | Where-Object id -In $action.dependsOn | ForEach-Object title)
+                Write-Host "    等待：$($dependencyTitles -join '、')" -ForegroundColor DarkGray
+            }
             if ($action.reason) {
                 Write-SetupWrappedText -Text $action.reason -FirstIndent '    ' -ContinuationIndent '    ' -ForegroundColor DarkGray
             }
@@ -406,8 +419,8 @@ function Show-CodexSetupPlan {
             Write-SetupWrappedText -Text $item -FirstIndent '  - ' -ContinuationIndent '    ' -ForegroundColor Gray
         }
     }
-    if (@($Plan.afterSetup).Count -gt 0) {
-        Write-SetupSectionHeader -Title '完成设置后' -ForegroundColor Cyan
+    if (@($Plan.afterSetup).Count -gt 0 -and @($Plan.blockingReasons).Count -eq 0) {
+        Write-SetupSectionHeader -Title '自动设置完成后的人工步骤' -ForegroundColor Cyan
         foreach ($item in $Plan.afterSetup) {
             Write-SetupWrappedText -Text $item -FirstIndent '  - ' -ContinuationIndent '    ' -ForegroundColor Gray
         }

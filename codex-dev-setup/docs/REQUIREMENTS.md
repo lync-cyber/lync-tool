@@ -2,13 +2,13 @@
 
 ## 目标
 
-消除 Codex 在 Windows、WSL、Shell、路径、Git、Node、Python 和包管理器之间的环境歧义。默认把跨平台开发收敛为一套 WSL2 Ubuntu 24.04 工具链；不为 v1 配置或双环境工作流提供兼容层。
+消除 Codex 在 Windows、WSL、Shell、路径、Git、Node、Python 和包管理器之间的环境歧义。默认把跨平台开发收敛为一套 WSL2 Ubuntu 工具链，Ubuntu 版本按配置选择并固定到本次会话；不为 v1 配置或双环境工作流提供兼容层。
 
 ## 模式契约
 
 `environmentMode` 是唯一环境决策，允许值只有：
 
-- `WslFirst`：默认值。所有仓库工作在 WSL2 Ubuntu 24.04 的 `/home` 文件系统中完成。
+- `WslFirst`：默认值。所有仓库工作在本次选定的 WSL2 Ubuntu 的 `/home` 文件系统中完成。
 - `WindowsNative`：仅用于必须调用 Windows API 或 Windows 原生工具链的项目。
 
 项目探测可以给出不一致警告，但不得自动改变配置模式、迁移仓库或在失败后切换 Shell。
@@ -16,7 +16,11 @@
 ## 阶段 1：系统前置条件
 
 - 支持 Windows 11 与 WSL2，不支持 WSL1。
-- 目标发行版名称必须精确为 `Ubuntu-24.04`。
+- `wsl.distribution` 默认为 `latest-stable`，另接受 `latest-lts` 和精确名称 `Ubuntu-YY.MM`。入口 `-Distribution` 覆盖配置值；通用 `Ubuntu` 和预览名称不作为目标。
+- 自动版本选择取 Canonical `meta-release` 中 `Supported=1` 的正式版本与微软 WSL 官方目录中当前 Windows OS 架构可安装版本的交集；`latest-lts` 进一步限定 LTS，再按版本选择最新项。执行前必须解析为精确发行版名，不硬编码“最新”版本。
+- 仅进入 WSL 检查或设置工作流才联网解析，每个请求最多 15 秒。失败必须说明重试或指定固定版本的方式，不静默降级；独立 Export、Rollback 和 WindowsNative 不触发解析。
+- 解析后在原会话配置对象中固定精确名称，供重新检查、设置和导出复用；不改写源配置。新进程读取原自动配置时重新解析，读取已导出的精确配置时保持固定。
+- 选择新版不会升级、迁移或删除已有其他发行版。所选发行版缺失时可规划并行安装；安装及修改默认发行版必须显示在执行计划中。
 - 检测必须区分 WSL 功能未启用、没有发行版、缺少目标发行版、目标 WSL2 就绪、WSL1 不受支持和状态未知；unknown 不得当成 missing。
 - 检测并规划默认 WSL2 和发行版安装；修改后明确提示重启范围。检测到 WSL1 时停止，不执行自动转换。
 - `WslFirst` 的 Windows 侧只安装 Desktop、Terminal、UI 所需 Git/gh 与可选 Docker Desktop。
@@ -28,6 +32,7 @@
 
 - 项目根目录位于 `~/code`，实际路径必须以 `/home/` 开头。
 - WSL 内安装 Linux 原生 Git、curl、构建工具、ripgrep、jq、fd、ShellCheck、shfmt、gh、PowerShell 7、Codex CLI、fnm、Node LTS、npm、pnpm、uv 与由 uv 管理的 Python 3.12。
+- Linux helper 必须核对 Ubuntu `VERSION_ID` 与精确目标版本一致，并按实际版本使用 Microsoft APT 软件源，不得沿用固定的 24.04 地址。Ubuntu 非 LTS 版本不在 Microsoft PowerShell 官方测试及支持范围内，软件源可用性不作保证；需要长期支持时推荐 `latest-lts`。
 - 交互式运行由 `sudo` 直接读取密码；工具不读取或保存 sudo 密码。无人值守运行只接受 passwordless sudo，否则停止。
 - Git 基线为 `core.autocrlf=input`、`core.safecrlf=warn`、`init.defaultBranch=main`、`fetch.prune=true`、`pull.ff=only`。
 - 不安装 Windows Node/Python/fnm/pnpm/uv，不共享 `node_modules`、`.venv`、缓存或 `CODEX_HOME`。

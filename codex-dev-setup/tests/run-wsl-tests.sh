@@ -32,7 +32,7 @@ pass "Bash syntax"
 wsl/setup.sh \
   --what-if \
   --code-root "$HOME/code" \
-  --expected-distro "Ubuntu-24.04" \
+  --expected-distro "$WSL_DISTRO_NAME" \
   --global-agents-template templates/global/AGENTS.wsl.md.template \
   --verify-script wsl/verify.sh \
   --configure-git \
@@ -44,12 +44,22 @@ wsl/setup.sh \
 if wsl/setup.sh \
   --what-if \
   --code-root /mnt/c/invalid \
-  --expected-distro "Ubuntu-24.04" \
+  --expected-distro "$WSL_DISTRO_NAME" \
   --global-agents-template templates/global/AGENTS.wsl.md.template \
   --verify-script wsl/verify.sh >/dev/null 2>&1; then
   fail "WSL setup accepted a Windows-mounted code root"
 fi
 pass "WSL helper WhatIf and path rejection"
+
+if mismatched_os_output=$(WSL_DISTRO_NAME=Ubuntu-00.04 wsl/setup.sh \
+  --what-if --code-root "$HOME/code" --expected-distro Ubuntu-00.04 \
+  --global-agents-template templates/global/AGENTS.wsl.md.template \
+  --verify-script wsl/verify.sh 2>&1); then
+  fail "WSL setup trusted a registered distro name that did not match the actual Ubuntu OS"
+fi
+[[ "$mismatched_os_output" == *'Setup requires the configured Ubuntu-00.04 OS'* ]] || \
+  fail "WSL setup failed before checking the actual Ubuntu version"
+pass "WSL helper checks actual OS version against the configured target"
 
 TEST_HOME=$(mktemp -d "$ROOT_DIR/.test-home.XXXXXX")
 trap 'rm -rf -- "$TEST_HOME"' EXIT
@@ -64,7 +74,7 @@ broken_config_hash=$(sha256sum "$BROKEN_HOME/.codex/config.toml" | cut -d' ' -f1
 if HOME="$BROKEN_HOME" wsl/setup.sh \
   --apply \
   --code-root "$BROKEN_HOME/code" \
-  --expected-distro "Ubuntu-24.04" \
+  --expected-distro "$WSL_DISTRO_NAME" \
   --global-agents-template templates/global/AGENTS.wsl.md.template \
   --verify-script wsl/verify.sh >/dev/null 2>&1; then
   fail "WSL setup accepted an incomplete managed block"
@@ -79,7 +89,7 @@ chmod 0600 "$TEST_HOME/.codex/config.toml"
 if HOME="$TEST_HOME" wsl/setup.sh \
   --apply \
   --code-root "$TEST_HOME/code" \
-  --expected-distro "Ubuntu-24.04" \
+  --expected-distro "$WSL_DISTRO_NAME" \
   --global-agents-template templates/global/AGENTS.wsl.md.template \
   --verify-script wsl/verify.sh >/dev/null 2>&1; then
   fail "WSL setup accepted unsafe TOML"
@@ -94,15 +104,15 @@ chmod 0600 "$TEST_HOME/.codex/config.toml" "$TEST_HOME/.bashrc"
 HOME="$TEST_HOME" SHELL=/bin/bash wsl/setup.sh \
   --apply \
   --code-root "$TEST_HOME/code" \
-  --expected-distro "Ubuntu-24.04" \
+  --expected-distro "$WSL_DISTRO_NAME" \
   --global-agents-template templates/global/AGENTS.wsl.md.template \
   --verify-script wsl/verify.sh >/dev/null
 [[ "$(stat -c '%a' "$TEST_HOME/.codex/config.toml")" == 600 ]] || fail "config.toml permissions were widened"
 [[ "$(stat -c '%a' "$TEST_HOME/.bashrc")" == 600 ]] || fail ".bashrc permissions were widened"
 wrapper_json=$(cd "$TEST_HOME/code" && HOME="$TEST_HOME" SHELL=/bin/bash "$TEST_HOME/.local/bin/codex-env-check" --json)
-jq -e '
+jq -e --arg distro "$WSL_DISTRO_NAME" '
   .schemaVersion == 2 and .verdict == "PASS" and .failureCount == 0 and
-  .expectedDistro == "Ubuntu-24.04" and .currentDistro == "Ubuntu-24.04" and
+  .expectedDistro == $distro and .currentDistro == $distro and
   (.codeRoot | startswith("/home/")) and (.codeRoot as $root | .workingDirectory | startswith($root)) and
   (.checks | type == "array" and length >= 7) and
   any(.checks[]; .id == "command:pwsh" and .status == "PASS") and
@@ -113,7 +123,7 @@ pass "WSL fail-fast configuration and file permissions"
 [[ -x wsl/verify.sh ]] || fail "wsl/verify.sh is not executable"
 verifier_text=$(wsl/verify.sh \
   --code-root "$ROOT_DIR" \
-  --expected-distro "Ubuntu-24.04" \
+  --expected-distro "$WSL_DISTRO_NAME" \
   --command bash \
   --command git \
   --command jq)
@@ -122,7 +132,7 @@ verifier_text=$(wsl/verify.sh \
 verifier_json=$(wsl/verify.sh \
   --json \
   --code-root "$ROOT_DIR" \
-  --expected-distro "Ubuntu-24.04" \
+  --expected-distro "$WSL_DISTRO_NAME" \
   --command bash \
   --command git \
   --command jq)
@@ -150,7 +160,7 @@ printf '%s\n' \
 chmod 0755 "$VERIFIER_BIN/rg" "$VERIFIER_BIN/uv" "$VERIFIER_PYTHON"
 
 managed_python_json=$(cd "$ROOT_DIR" && HOME="$VERIFIER_HOME" SHELL=/bin/bash PATH="$VERIFIER_BIN:/usr/bin:/bin" \
-  wsl/verify.sh --json --code-root "$ROOT_DIR" --expected-distro Ubuntu-24.04 \
+  wsl/verify.sh --json --code-root "$ROOT_DIR" --expected-distro "$WSL_DISTRO_NAME" \
   --command rg --command uv --uv-managed-python 3.12)
 jq -e '
   .verdict == "PASS" and
@@ -160,7 +170,7 @@ jq -e '
 
 if outside_python_json=$(cd "$ROOT_DIR" && HOME="$VERIFIER_HOME" SHELL=/bin/bash \
   PATH="$VERIFIER_BIN:/usr/bin:/bin" FAKE_UV_OUTSIDE=1 wsl/verify.sh --json \
-  --code-root "$ROOT_DIR" --expected-distro Ubuntu-24.04 --command rg --command uv --uv-managed-python 3.12); then
+  --code-root "$ROOT_DIR" --expected-distro "$WSL_DISTRO_NAME" --command rg --command uv --uv-managed-python 3.12); then
   fail "verifier accepted a system interpreter as uv-managed Python"
 fi
 jq -e '
@@ -170,7 +180,7 @@ jq -e '
 
 if mounted_python_json=$(cd "$ROOT_DIR" && HOME="$VERIFIER_HOME" SHELL=/bin/bash \
   PATH="$VERIFIER_BIN:/usr/bin:/bin" FAKE_UV_MOUNTED=1 wsl/verify.sh --json \
-  --code-root "$ROOT_DIR" --expected-distro Ubuntu-24.04 --command rg --command uv --uv-managed-python 3.12); then
+  --code-root "$ROOT_DIR" --expected-distro "$WSL_DISTRO_NAME" --command rg --command uv --uv-managed-python 3.12); then
   fail "verifier accepted uv-managed Python from a Windows mount"
 fi
 jq -e '
@@ -183,7 +193,7 @@ mkdir -p "$INJECTED_BIN"
 [[ -x /mnt/c/Windows/System32/cmd.exe ]] || fail "Windows mount target for the rg injection test is unavailable"
 ln -s /mnt/c/Windows/System32/cmd.exe "$INJECTED_BIN/rg"
 if injected_rg_json=$(cd "$ROOT_DIR" && HOME="$VERIFIER_HOME" SHELL=/bin/bash PATH="$INJECTED_BIN:/usr/bin:/bin" \
-  wsl/verify.sh --json --code-root "$ROOT_DIR" --expected-distro Ubuntu-24.04 --command rg); then
+  wsl/verify.sh --json --code-root "$ROOT_DIR" --expected-distro "$WSL_DISTRO_NAME" --command rg); then
   fail "verifier accepted rg from an injected Windows path"
 fi
 jq -e '

@@ -24,6 +24,7 @@ $PSNativeCommandUseErrorActionPreference = $false
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $startScript = Join-Path $repoRoot 'Start-CodexSetup.ps1'
 Import-Module (Join-Path $repoRoot 'modules\CodexSetup.Common.psm1') -Force -ErrorAction Stop
+Import-Module (Join-Path $repoRoot 'modules\CodexSetup.Detection.psm1') -Force -ErrorAction Stop
 if ([string]::IsNullOrWhiteSpace($ConfigPath)) { $ConfigPath = Join-Path $repoRoot 'config\defaults.json' }
 if ([string]::IsNullOrWhiteSpace($EvidenceRoot)) {
     if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) { throw 'LOCALAPPDATA 不可用；请显式指定 -EvidenceRoot。' }
@@ -518,7 +519,10 @@ switch ($Phase) {
             $blocked.Add("无法精确确认预装包 $($package.source)/$($package.id)：$($package.error)。")
         }
         $selected = Get-SelectedMissingTarget -Baseline $baseline
-        $config = Read-JsonFile -Path ([System.IO.Path]::GetFullPath($ConfigPath))
+        $config = Read-SetupConfig -Path ([System.IO.Path]::GetFullPath($ConfigPath))
+        if ($config.environmentMode -eq 'WslFirst') {
+            $config.wsl.distribution = Resolve-WslDistribution -Distribution $config.wsl.distribution
+        }
         $codexPackage = @($baseline | Where-Object id -eq '9PLM9XGG6VKS' | Select-Object -First 1)
         if ($codexPackage.Count -ne 1 -or -not $codexPackage[0].installed) {
             $blocked.Add('当前工作站未精确检测到 Microsoft Store Codex Desktop（9PLM9XGG6VKS）；无法执行 GUI 集成验收。')

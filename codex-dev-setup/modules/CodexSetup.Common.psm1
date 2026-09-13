@@ -81,14 +81,11 @@ function Get-CodexConfigSettings {
 function Get-CodexConfigState {
     param([Parameter(Mandatory)]$Config)
     $path = Join-Path $env:USERPROFILE '.codex\config.toml'
-    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-        return [pscustomobject]@{ path=$path; ready=$false }
-    }
-
     $values = @{}
     $duplicates = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     $section = ''
-    foreach ($line in @(Get-Content -LiteralPath $path -Encoding utf8)) {
+    $content = if (Test-Path -LiteralPath $path -PathType Leaf) { @(Get-Content -LiteralPath $path -Encoding utf8) } else { @() }
+    foreach ($line in $content) {
         if ($line -match '^\s*\[([^\]]+)\]\s*(?:#.*)?$') {
             $section = $matches[1].Trim()
             continue
@@ -99,15 +96,18 @@ function Get-CodexConfigState {
         else { $values[$name] = $matches[2].Trim() }
     }
 
-    $ready = $true
+    $changes = @()
     foreach ($setting in @(Get-CodexConfigSettings -Config $Config)) {
         $name = "$($setting.section)`0$($setting.key)"
         if ($duplicates.Contains($name) -or -not $values.ContainsKey($name) -or $values[$name] -cne $setting.value) {
-            $ready = $false
-            break
+            $changes += [pscustomobject]@{
+                name=$(if ($setting.section) { "$($setting.section).$($setting.key)" } else { $setting.key })
+                before=$(if ($duplicates.Contains($name)) { '[重复定义]' } elseif ($values.ContainsKey($name)) { $values[$name] } else { '[未设置]' })
+                after=$setting.value
+            }
         }
     }
-    return [pscustomobject]@{ path=$path; ready=$ready }
+    return [pscustomobject]@{ path=$path; ready=($changes.Count -eq 0); changes=$changes }
 }
 
 function Get-WindowsGitSettings {
@@ -166,8 +166,9 @@ function Get-GlobalAgentsState {
     param([Parameter(Mandatory)][ValidateSet('WslFirst', 'WindowsNative')][string]$EnvironmentMode)
     $path = Join-Path $env:USERPROFILE '.codex\AGENTS.md'
     $templatePath = Get-GlobalAgentsTemplatePath -EnvironmentMode $EnvironmentMode
+    $expected = ConvertTo-SetupFileText (Get-Content -LiteralPath $templatePath -Raw -Encoding utf8)
     $ready = (Test-Path -LiteralPath $path -PathType Leaf) -and
-        (Get-SetupSha256 -Path $path) -eq (Get-SetupSha256 -Path $templatePath)
+        (Get-SetupSha256 -Path $path) -eq (Get-SetupTextSha256 $expected)
     return [pscustomobject]@{ path=$path; templatePath=$templatePath; ready=$ready }
 }
 
@@ -442,6 +443,7 @@ function Invoke-SetupProcessCapture {
 
     $timer = [Diagnostics.Stopwatch]::StartNew()
     $process = $null
+    $timedOut = $false
     try {
         $startInfo = [Diagnostics.ProcessStartInfo]::new()
         $startInfo.FileName = $FilePath
@@ -459,21 +461,35 @@ function Invoke-SetupProcessCapture {
         $process = [Diagnostics.Process]::new()
         $process.StartInfo = $startInfo
         if (-not $process.Start()) { throw "无法启动命令：$FilePath" }
-        if ($null -ne $StandardInput) {
-            $process.StandardInput.Write($StandardInput)
-            $process.StandardInput.Close()
-        }
+        # Drain both output pipes before sending input. All pipe operations share
+        # the process deadline, including a child that never consumes stdin.
         $stdoutTask = $process.StandardOutput.ReadToEndAsync()
         $stderrTask = $process.StandardError.ReadToEndAsync()
-        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-            try { $process.Kill() } catch { }
-            try { [void]$process.WaitForExit(2000) } catch { }
-            $timer.Stop()
-            return [pscustomobject]@{
-                exitCode=$null; output=''; timedOut=$true; error="timeout:${TimeoutSeconds}s"
-                elapsedMs=$timer.ElapsedMilliseconds
+        $exitTask = $process.WaitForExitAsync()
+        $stdinTask = $null
+        $stdinCloseTask = $null
+        if ($null -ne $StandardInput) {
+            $stdinTask = $process.StandardInput.WriteAsync($StandardInput)
+        }
+        while ($true) {
+            if ($null -ne $stdinTask -and $stdinTask.IsCompleted -and $null -eq $stdinCloseTask) {
+                [void]$stdinTask.GetAwaiter().GetResult()
+                # Closing sends EOF, and can itself flush buffered input.
+                $stdinCloseTask = $process.StandardInput.DisposeAsync().AsTask()
+            }
+            $pending = [System.Threading.Tasks.Task[]]@(
+                @($exitTask, $stdoutTask, $stderrTask, $stdinTask, $stdinCloseTask) |
+                    Where-Object { $null -ne $_ -and -not $_.IsCompleted }
+            )
+            if ($pending.Count -eq 0) { break }
+            $remainingMs = [math]::Max(0, $TimeoutSeconds * 1000 - [int]$timer.ElapsedMilliseconds)
+            if ($remainingMs -eq 0 -or -not [System.Threading.Tasks.Task]::WhenAny($pending).Wait($remainingMs)) {
+                $timedOut = $true
+                throw "timeout:${TimeoutSeconds}s"
             }
         }
+        [void]$exitTask.GetAwaiter().GetResult()
+        if ($null -ne $stdinCloseTask) { [void]$stdinCloseTask.GetAwaiter().GetResult() }
         $stdout = $stdoutTask.GetAwaiter().GetResult()
         $stderr = $stderrTask.GetAwaiter().GetResult()
         $timer.Stop()
@@ -486,14 +502,21 @@ function Invoke-SetupProcessCapture {
         }
     }
     catch {
+        $message = if ($timedOut) { "timeout:${TimeoutSeconds}s" } else { ConvertTo-RedactedText $_.Exception.Message }
+        # Kill descendants as well: they may inherit a pipe and keep it open.
+        if ($null -ne $process) {
+            try { $process.Kill($true) } catch { }
+            try { [void]$process.WaitForExit(2000) } catch { }
+        }
         $timer.Stop()
         return [pscustomobject]@{
-            exitCode=$null; output=''; timedOut=$false
-            error=(ConvertTo-RedactedText $_.Exception.Message); elapsedMs=$timer.ElapsedMilliseconds
+            exitCode=$null; output=''; timedOut=$timedOut
+            error=$message
+            elapsedMs=$timer.ElapsedMilliseconds
         }
     }
     finally {
-        if ($null -ne $process) { $process.Dispose() }
+        if ($null -ne $process) { try { $process.Dispose() } catch { } }
     }
 }
 
@@ -846,7 +869,7 @@ function Assert-SetupObjectShape {
     param(
         [Parameter(Mandatory)]$Value,
         [Parameter(Mandatory)][string]$Path,
-        [Parameter(Mandatory)][string[]]$Required,
+        [Parameter(Mandatory)][AllowEmptyCollection()][string[]]$Required,
         [string[]]$Optional = @()
     )
     if ($null -eq $Value -or $Value -isnot [pscustomobject]) {
@@ -898,15 +921,23 @@ function Assert-SetupConfiguration {
     param([Parameter(Mandatory)]$Config)
 
     Assert-SetupObjectShape -Value $Config -Path 'config' -Required @(
-        'schemaVersion', 'environmentMode', 'preferences', 'paths',
+        'schemaVersion', 'environmentMode', 'paths',
         'windows', 'codex', 'wsl', 'toolchains', 'projectTemplates'
-    )
+    ) -Optional @('preferences')
     if ($Config.schemaVersion -ne 2) { throw "不支持的配置 schemaVersion：$($Config.schemaVersion)；需要 2。" }
     Assert-SetupString $Config.environmentMode 'environmentMode' -Allowed @('WslFirst', 'WindowsNative')
 
-    Assert-SetupObjectShape $Config.preferences 'preferences' @('moduleConfirmation', 'firstRunWhatIf')
-    Assert-SetupString $Config.preferences.moduleConfirmation 'preferences.moduleConfirmation' -Allowed @('Prompt', 'Never')
-    Assert-SetupBoolean $Config.preferences.firstRunWhatIf 'preferences.firstRunWhatIf'
+    # Accept old v2 exports, but these retired UI switches cannot bypass consent.
+    $legacyPreferences = Get-SetupProperty $Config 'preferences'
+    if ($null -ne $legacyPreferences) {
+        Assert-SetupObjectShape $legacyPreferences 'preferences' @() -Optional @('moduleConfirmation', 'firstRunWhatIf')
+        if ($null -ne $legacyPreferences.PSObject.Properties['moduleConfirmation']) {
+            Assert-SetupString $legacyPreferences.moduleConfirmation 'preferences.moduleConfirmation' -Allowed @('Prompt', 'Never')
+        }
+        if ($null -ne $legacyPreferences.PSObject.Properties['firstRunWhatIf']) {
+            Assert-SetupBoolean $legacyPreferences.firstRunWhatIf 'preferences.firstRunWhatIf'
+        }
+    }
 
     Assert-SetupObjectShape $Config.paths 'paths' @('windowsProjects', 'wslProjects', 'projectPath')
     Assert-SetupString $Config.paths.windowsProjects 'paths.windowsProjects'
@@ -933,7 +964,10 @@ function Assert-SetupConfiguration {
         'distribution', 'installCodexCli', 'installPnpm', 'configureGit',
         'packages', 'aliases', 'networking'
     )
-    Assert-SetupString $Config.wsl.distribution 'wsl.distribution' -Allowed @('Ubuntu-24.04')
+    Assert-SetupString $Config.wsl.distribution 'wsl.distribution'
+    if ($Config.wsl.distribution -cnotmatch '^(latest-stable|latest-lts|Ubuntu-[0-9]{2}\.(04|10))$') {
+        throw 'wsl.distribution 必须是 latest-stable、latest-lts 或精确版本名（例如 Ubuntu-24.04）。'
+    }
     foreach ($name in @('installCodexCli', 'installPnpm', 'configureGit')) {
         Assert-SetupBoolean $Config.wsl.$name "wsl.$name"
     }
@@ -1021,6 +1055,21 @@ function Export-SetupConfig {
     return [pscustomobject]@{ status='Cancelled'; path=$Path }
 }
 
+function Read-SetupMenuChoice {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Prompt,
+        [Parameter(Mandatory)][string[]]$Choices,
+        [AllowEmptyString()][string]$Default = ''
+    )
+    while ($true) {
+        $answer = ([string](Read-Host $Prompt)).Trim().ToUpperInvariant()
+        if (-not $answer) { return $Default }
+        if ($answer -in $Choices) { return $answer }
+        Write-SetupStatus -Kind Warning -Message "无效选项：$answer。请输入 $($Choices -join '、')；直接回车使用默认选项。"
+    }
+}
+
 function Confirm-SetupChoice {
     [CmdletBinding()]
     param(
@@ -1030,9 +1079,9 @@ function Confirm-SetupChoice {
     )
     if ($NonInteractive) { return $DefaultYes }
     $suffix = if ($DefaultYes) { '[Y/n]' } else { '[y/N]' }
-    $answer = Read-Host "$Prompt $suffix"
-    if ([string]::IsNullOrWhiteSpace($answer)) { return $DefaultYes }
-    return $answer.Trim() -match '^(?i:y|yes|是|确认)$'
+    $answer = Read-SetupMenuChoice -Prompt "$Prompt $suffix" -Choices @('Y', 'YES', '是', '确认', 'N', 'NO', '否') `
+        -Default $(if ($DefaultYes) { 'Y' } else { 'N' })
+    return $answer -in @('Y', 'YES', '是', '确认')
 }
 
 function Save-RollbackManifest {
@@ -1126,6 +1175,11 @@ function Backup-SetupFile {
     return [pscustomobject]$record
 }
 
+function ConvertTo-SetupFileText {
+    param([AllowEmptyString()][string]$Content)
+    return $Content.TrimEnd("`r", "`n") + [Environment]::NewLine
+}
+
 function Set-SetupFileContent {
     [CmdletBinding(SupportsShouldProcess)]
     param(
@@ -1137,7 +1191,7 @@ function Set-SetupFileContent {
     )
     $fullPath = [System.IO.Path]::GetFullPath($Path)
     $current = if (Test-Path -LiteralPath $fullPath -PathType Leaf) { Get-Content -LiteralPath $fullPath -Raw -Encoding utf8 } else { $null }
-    $normalized = $Content.TrimEnd("`r", "`n") + [Environment]::NewLine
+    $normalized = ConvertTo-SetupFileText $Content
     if ($current -eq $normalized) {
         Write-SetupLog -Message '文件内容已是目标状态，跳过' -Data @{ path = $fullPath }
         return $false
@@ -1278,12 +1332,13 @@ function Get-WslPackageConfiguration {
 function Get-CodexDesktopChecklist {
     param([Parameter(Mandatory)]$Config)
     if ($Config.environmentMode -eq 'WslFirst') {
+        $distroPath = if ($Config.wsl.distribution -like 'latest-*') { '<检查结果中的发行版名称>' } else { $Config.wsl.distribution }
         return [pscustomobject]@{
             items=@(
                 '在 Codex Desktop 设置中，将 Agent environment 设为 Windows Subsystem for Linux。'
                 '将集成终端设为 WSL，然后重启 Codex Desktop。'
                 '分别在新 Agent 任务和新集成终端运行 codex-env-check。'
-                ('两次检查通过后，从 \\wsl$\{0}\home\<user>\code 打开项目。' -f $Config.wsl.distribution)
+                ('两次检查通过后，从 \\wsl$\{0}\home\<user>\code 打开项目。' -f $distroPath)
             )
             verificationCommand='codex-env-check'
         }
@@ -1300,7 +1355,7 @@ function Get-CodexDesktopChecklist {
 
 Export-ModuleMember -Function @(
     'Initialize-SetupRuntime', 'Get-SetupRuntime', 'Write-SetupLog', 'Write-SetupStatus', 'Get-SetupProperty',
-    'Read-SetupConfig', 'Export-SetupConfig', 'Confirm-SetupChoice', 'Backup-SetupFile',
+    'Read-SetupConfig', 'Export-SetupConfig', 'Read-SetupMenuChoice', 'Confirm-SetupChoice', 'Backup-SetupFile',
     'Set-SetupFileContent', 'Register-InstalledPackage', 'Add-RollbackNote',
     'Complete-SetupRuntime', 'ConvertTo-RedactedText', 'Get-SetupModuleDisplayName',
     'Write-SetupWrappedText', 'Get-SetupOrderedModules',

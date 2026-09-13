@@ -1,5 +1,62 @@
 Set-StrictMode -Version Latest
 
+function Select-WslUbuntuDistribution {
+    param(
+        [Parameter(Mandatory)][ValidateSet('latest-stable', 'latest-lts')][string]$Policy,
+        [Parameter(Mandatory)][string]$ReleaseText,
+        [Parameter(Mandatory)]$Catalog,
+        [string]$Architecture = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+    )
+    $architectureField = switch ($Architecture) {
+        'X64' { 'Amd64' }
+        'Arm64' { 'Arm64' }
+        default { throw "WSL Ubuntu 不支持当前架构：$Architecture。" }
+    }
+    $modern = Get-SetupProperty $Catalog 'ModernDistributions'
+    $entries = @(Get-SetupProperty $modern 'Ubuntu' -Default @()) + @(Get-SetupProperty $Catalog 'Distributions' -Default @())
+    $available = @($entries | Where-Object {
+        $name = Get-SetupProperty $_ 'Name' -Default ''
+        $modernUrl = Get-SetupProperty (Get-SetupProperty $_ ($architectureField + 'Url')) 'Url' -Default ''
+        $legacyUrl = Get-SetupProperty $_ ($architectureField + 'PackageUrl') -Default ''
+        $name -cmatch '^Ubuntu-[0-9]{2}\.(04|10)$' -and ($modernUrl -match '^https://' -or $legacyUrl -match '^https://')
+    } | ForEach-Object { $_.Name })
+    $candidates = @(foreach ($block in ($ReleaseText -split '\r?\n\s*\r?\n')) {
+        $fields = @{}
+        foreach ($line in ($block -split '\r?\n')) {
+            if ($line -match '^([^:]+):\s*(.*)$') { $fields[$Matches[1]] = $Matches[2].Trim() }
+        }
+        # meta-release (not meta-release-development) is Canonical's stable feed.
+        if ($fields['Supported'] -ne '1' -or $fields['Version'] -cnotmatch '^([0-9]{2}\.(?:04|10))(?:\.[0-9]+)?( LTS)?$') { continue }
+        $version = $Matches[1]
+        $isLts = $Matches[2] -eq ' LTS'
+        $releaseDate = [DateTimeOffset]::MinValue
+        if (-not [DateTimeOffset]::TryParse(([string]$fields['Date']).Replace('UTC', '+00:00'),
+            [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$releaseDate) -or
+            $releaseDate -gt [DateTimeOffset]::UtcNow) { continue }
+        if ($Policy -eq 'latest-lts' -and -not $isLts) { continue }
+        if ("Ubuntu-$version" -in $available) { [version]$version }
+    })
+    $selected = $candidates | Sort-Object -Descending | Select-Object -First 1
+    if ($null -eq $selected) { throw "Ubuntu 发布记录与 WSL 安装目录中没有适用于 $Architecture 的 $Policy 版本。" }
+    return 'Ubuntu-{0}.{1:00}' -f $selected.Major, $selected.Minor
+}
+
+function Resolve-WslDistribution {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Distribution)
+    if ($Distribution -cmatch '^Ubuntu-[0-9]{2}\.(04|10)$') { return $Distribution }
+    if ($Distribution -cnotin @('latest-stable', 'latest-lts')) { throw "无效的 Ubuntu 版本选择：$Distribution。" }
+    try {
+        $response = Invoke-WebRequest -Uri 'https://changelogs.ubuntu.com/meta-release' -TimeoutSec 15 -ErrorAction Stop
+        $releaseText = if ($response.Content -is [byte[]]) { [Text.Encoding]::UTF8.GetString($response.Content) } else { [string]$response.Content }
+        $catalog = Invoke-RestMethod -Uri 'https://raw.githubusercontent.com/microsoft/WSL/master/distributions/DistributionInfo.json' -TimeoutSec 15 -ErrorAction Stop
+        return Select-WslUbuntuDistribution -Policy $Distribution -ReleaseText $releaseText -Catalog $catalog
+    }
+    catch {
+        throw "无法解析 $Distribution：$($_.Exception.Message) 请检查网络后重试，或通过 -Distribution Ubuntu-YY.MM / wsl.distribution 指定已确认的版本。未自动回退到旧版。"
+    }
+}
+
 function Test-IsAppExecutionAlias {
     param([AllowNull()][string]$Path)
     if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
@@ -105,14 +162,6 @@ function Invoke-DetectionStage {
         Write-SetupLog -Level Warning -Message '检测阶段部分失败' -Data @{ stage=$Index; name=$Name; elapsedMs=$timer.ElapsedMilliseconds; error=$message }
         return & $Fallback $message
     }
-}
-
-function Get-HealthLabel {
-    param([Parameter(Mandatory)][int]$Score)
-    if ($Score -ge 90) { return '状态良好' }
-    if ($Score -ge 75) { return '基本可用' }
-    if ($Score -ge 60) { return '建议优化' }
-    return '关键组件缺失'
 }
 
 function Get-ToolInstallationRoot {
@@ -266,38 +315,43 @@ function Get-WslInfo {
             feature=$feature; detail=''; error=$(if ($state -eq 'Unknown') { $feature.error } else { $null })
         }
     }
-    if ($feature.enabled -eq $false) {
-        return [pscustomobject]@{
-            state='FeatureDisabled'; installed=$false; distros=@(); distribution=$Distribution
-            defaultDistribution=$null; defaultVersion=$null; distributionInstalled=$false; distributionVersion=$null; distributionWsl2=$false
-            feature=$feature; detail=''; error=$null
-        }
-    }
+    # Store WSL2 can work with the legacy WSL1 optional component disabled.
+    # A successful WSL query is stronger evidence than that component's state.
     $defaultVersion = Get-WslDefaultVersion
     $wslListTimeoutSeconds = 20
     $listResult = Invoke-SetupProcessCapture -FilePath $command.Source -Arguments @('--list', '--verbose') `
         -TimeoutSeconds $wslListTimeoutSeconds -OutputEncoding ([Text.Encoding]::Unicode)
-    if ($listResult.timedOut -or $null -eq $listResult.exitCode -or $listResult.exitCode -ne 0) {
+    # Older inbox WSL returns -1 for an empty list without a symbolic error code.
+    # Recognize only its explicit empty-list message; arbitrary failures remain Unknown.
+    $emptyList = -not $listResult.timedOut -and -not $listResult.error -and
+        $null -ne $listResult.exitCode -and (
+            $listResult.output -match '(?m)^.*\bWsl/WSL_E_DEFAULT_DISTRO_NOT_FOUND\s*$' -or
+            ($listResult.exitCode -in @(0, -1) -and $listResult.output -match '(?im)^(Windows Subsystem for Linux has no installed distributions\.|适用于 Linux 的 Windows 子系统没有已安装的分发。)\s*$')
+        )
+    $distroRows = @(ConvertFrom-WslListVerbose -Output $listResult.output)
+    $featureRequired = -not $listResult.timedOut -and -not $listResult.error -and
+        $null -ne $listResult.exitCode -and $listResult.exitCode -ne 0 -and $distroRows.Count -eq 0 -and
+        $listResult.output -match '(?m)^.*\bWsl/(?:[^\s/]+/)*WSL_E_(?:WSL_OPTIONAL_COMPONENT|VIRTUAL_MACHINE_PLATFORM)_REQUIRED\s*$'
+    if ($listResult.timedOut -or $listResult.error -or $null -eq $listResult.exitCode -or
+        (-not $emptyList -and ($listResult.exitCode -ne 0 -or $distroRows.Count -eq 0))) {
         $listError = if ($listResult.timedOut) {
-            "wsl --list --verbose 在 $wslListTimeoutSeconds 秒内未响应。保存 WSL 工作后运行 wsl --shutdown，再刷新检查。"
-        }
-        elseif ($null -ne $listResult.exitCode) {
-            "wsl --list --verbose 查询失败（exit=$($listResult.exitCode)）。运行 wsl --status 查看 WSL 状态。"
+            "WSL 发行版查询超时（$wslListTimeoutSeconds 秒）；请在 Windows Terminal 运行：wsl --status"
         }
         elseif ($listResult.error) {
-            "wsl --list --verbose 查询失败：$($listResult.error)"
+            "无法启动或完成 WSL 查询：$($listResult.error)"
         }
-        else { 'wsl --list --verbose 查询失败。' }
+        elseif ($listResult.exitCode -eq 0) { 'WSL 查询输出无法识别，尚不能确认发行版状态。请在 Windows Terminal 运行：wsl --list --verbose' }
+        else { "WSL 发行版查询失败（exit=$($listResult.exitCode)）。请在 Windows Terminal 运行：wsl --status" }
+        if ($listResult.output) { $listError += "`nWSL 返回：" + (ConvertTo-RedactedText $listResult.output) }
         return [pscustomobject]@{
-            state='Unknown'; installed=$true
+            state=$(if ($featureRequired) { 'FeatureDisabled' } else { 'Unknown' }); installed=(-not $featureRequired)
             distros=@(); distribution=$Distribution; defaultDistribution=$null; defaultVersion=$defaultVersion
             distributionInstalled=$false; distributionVersion=$null; distributionWsl2=$false
             feature=$feature; detail=$listResult.output
-            error=$listError
+            error=$(if ($featureRequired) { $null } else { $listError })
         }
     }
-    $distroRows = @(ConvertFrom-WslListVerbose -Output $listResult.output)
-    $distros = @($distroRows.name)
+    $distros = @($distroRows | ForEach-Object name)
     $distributionInstalled = $Distribution -in $distros
     $defaultRow = $distroRows | Where-Object isDefault | Select-Object -First 1
     $defaultDistribution = if ($null -eq $defaultRow) { $null } else { $defaultRow.name }
@@ -535,27 +589,22 @@ function Get-WslToolchainInfo {
         [Parameter(Mandatory)]$Config,
         [switch]$Skip
     )
+    $distro = if ($null -ne $WslInfo) { $WslInfo.distribution } else { [string]$Config.wsl.distribution }
+    $unavailable = [pscustomobject]@{
+        available=$false; distro=$distro; tools=[pscustomobject]@{}; packages=[pscustomobject]@{}
+        requiredCommandNames=@(); missingRequiredCommands=@(); nonNativeCommands=@()
+        aptPackagesMissing=@(); codeRootExists=$null; managedBlockReady=$null; globalAgentsReady=$null
+        codexConfigReady=$null; verifyCommandReady=$null; gitBaselinePresent=$null; uvManagedPythonReady=$null
+        readiness='Unknown'; environmentReady=$false; sudoAvailable=$null; sudoMode=$null; githubAuthStatus=$null
+        error=$null; skipped=$true; reason=$null
+    }
     if ($Skip) {
-        $distro = if ($null -ne $WslInfo) { $WslInfo.distribution } else { [string]$Config.wsl.distribution }
-        return [pscustomobject]@{
-            available=$false; distro=$distro; tools=[pscustomobject]@{}; packages=[pscustomobject]@{}
-            requiredCommandNames=@(); missingRequiredCommands=@(); nonNativeCommands=@()
-            aptPackagesMissing=@(); codeRootExists=$null; managedBlockReady=$null; globalAgentsReady=$null
-            codexConfigReady=$null; verifyCommandReady=$null; gitBaselinePresent=$null; uvManagedPythonReady=$null; readiness='Unknown'; environmentReady=$false; sudoAvailable=$null; sudoMode=$null
-            githubAuthStatus=$null
-            error=$null; skipped=$true; reason='快速检测未启动 WSL 发行版。'
-        }
+        $unavailable.reason = '快速检测未启动 WSL 发行版。'
+        return $unavailable
     }
     if ($null -eq $WslInfo -or -not $WslInfo.distributionWsl2) {
-        $distro = if ($null -ne $WslInfo) { $WslInfo.distribution } else { [string]$Config.wsl.distribution }
-        return [pscustomobject]@{
-            available=$false; distro=$distro; tools=[pscustomobject]@{}; packages=[pscustomobject]@{}
-            requiredCommandNames=@(); missingRequiredCommands=@(); nonNativeCommands=@()
-            aptPackagesMissing=@(); codeRootExists=$null; managedBlockReady=$null; globalAgentsReady=$null
-            codexConfigReady=$null; verifyCommandReady=$null; gitBaselinePresent=$null; uvManagedPythonReady=$null; readiness='NotReady'; environmentReady=$false; sudoAvailable=$null; sudoMode=$null
-            githubAuthStatus=$null
-            error=$null; skipped=$false; reason="没有可用的 WSL2 发行版 $distro。"
-        }
+        $unavailable.reason = if ((Get-SetupProperty $WslInfo 'state' 'Unknown') -eq 'Unknown') { '未检查：无法确认 WSL 发行版状态。' } else { "未检查：请先准备 WSL2 发行版 $distro。" }
+        return $unavailable
     }
     $packageConfiguration = Get-WslPackageConfiguration -Config $Config
     $distro = $WslInfo.distribution
@@ -808,6 +857,16 @@ fi
     ) + @($packageConfiguration.packageNames) + $probeCommandNames
     $probeResult = Invoke-SetupProcessCapture -FilePath 'wsl.exe' -Arguments $probeArguments `
         -StandardInput ($stateScriptText + "`n" + $toolScriptText) -TimeoutSeconds 30 -OutputEncoding ([Text.Encoding]::UTF8)
+    if ($probeResult.timedOut -or $probeResult.error -or $null -eq $probeResult.exitCode -or $probeResult.exitCode -ne 0) {
+        $detail = if ($probeResult.timedOut) { '30 秒内未完成' }
+            elseif ($probeResult.error) { [string]$probeResult.error }
+            else { "exit=$($probeResult.exitCode)" }
+        $unavailable.skipped = $false
+        $unavailable.reason = "无法完成 $distro 工具链检查（$detail）；尚不能确认 Linux 工具状态。"
+        $unavailable.error = $unavailable.reason
+        if ($probeResult.output) { $unavailable.error += "`nWSL 返回：" + (ConvertTo-RedactedText $probeResult.output) }
+        return $unavailable
+    }
     $toolValues = [ordered]@{}
     $packageValues = [ordered]@{}
     $stateValues = [ordered]@{}
@@ -828,6 +887,21 @@ fi
         elseif ($line -match '^state:([^=]+)=(.*)$') {
             $stateValues[$matches[1]] = $matches[2]
         }
+    }
+    $expectedStates = @{
+        codeRoot=@('present', 'missing'); managedShellBlock=@('ready', 'stale')
+        globalAgents=@('ready', 'stale'); codexConfig=@('ready', 'stale'); environmentCheck=@('ready', 'stale')
+        gitBaseline=@('ready', 'missing'); uvManagedPython=@('ready', 'missing', 'not-required')
+        sudo=@('passwordless', 'interactive', 'missing'); ghAuth=@('authenticated', 'unauthenticated', 'windows-path', 'missing')
+    }
+    $invalidStates = @($expectedStates.Keys | Where-Object { -not $stateValues.Contains($_) -or $stateValues[$_] -notin $expectedStates[$_] })
+    $unreportedTools = @($probeCommandNames | Where-Object { -not $toolValues.Contains($_) })
+    $invalidPackages = @($packageConfiguration.packageNames | Where-Object { -not $packageValues.Contains($_) -or $packageValues[$_].status -notin @('installed', 'missing') })
+    if ($invalidStates.Count -gt 0 -or $unreportedTools.Count -gt 0 -or $invalidPackages.Count -gt 0) {
+        $unavailable.skipped = $false
+        $unavailable.reason = "$distro 检查输出不完整或无法识别；尚不能确认 Linux 工具状态，请重新检查。"
+        $unavailable.error = $unavailable.reason
+        return $unavailable
     }
     $aptPackagesMissing = @($packageConfiguration.packageNames | Where-Object {
         -not $packageValues.Contains($_) -or $packageValues[$_].status -ne 'installed'
@@ -920,7 +994,10 @@ function Get-CodexSetupDetection {
                 }
             }
             else {
-                $state = Get-WindowsPackageState -PackageId $target.id -Source $target.source -TimeoutSeconds 10
+                try { $state = Get-WindowsPackageState -PackageId $target.id -Source $target.source -TimeoutSeconds 10 }
+                catch {
+                    $state = [pscustomobject]@{ state='Unknown'; installed=$false; version=$null; error=(ConvertTo-RedactedText $_.Exception.Message) }
+                }
                 if ([string]$state.error -like 'winget-list-timeout:*') { $timedOutSources[$target.source] = $true }
             }
             $packageStates[$key] = $state
@@ -933,7 +1010,7 @@ function Get-CodexSetupDetection {
         }
         $states = @($packageStates.Values)
         $unknownStates = @($states | Where-Object state -eq 'Unknown')
-        $catalogError = @($unknownStates.error | Where-Object { $_ } | Select-Object -Unique) -join '; '
+        $catalogError = @($unknownStates | ForEach-Object error | Where-Object { $_ } | Select-Object -Unique) -join '; '
         $catalog = [pscustomobject]@{
             state=$(if ($unknownStates.Count -eq 0) { 'Known' } elseif ($unknownStates.Count -eq $states.Count) { 'Unknown' } else { 'Partial' })
             complete=$false
@@ -1174,6 +1251,7 @@ function Get-CodexSetupDetection {
         }
     } -ResultSummary {
         param($value)
+        if ([string]::IsNullOrWhiteSpace($ProjectPath)) { return '未选择项目；仅检查全局开发环境' }
         $recommendedText = if ($value.recommendedEnvironmentMode -eq 'WindowsNative') { 'Windows 原生开发环境' } else { 'WSL/Linux 开发环境' }
         $matchText = if ($value.matchesConfiguredMode) { '与配置一致' } else { '与当前配置不一致' }
         "项目建议 $recommendedText；$matchText"
@@ -1236,38 +1314,12 @@ function Get-CodexSetupDetection {
         issues=@($issues)
         partial=$issues.Count -gt 0
     }
-    $score = 100
-    if (-not $windows.isWindows11) { $score -= 25 }
-    foreach ($required in @($result.powershell7, $result.winget)) { if (-not $required.installed) { $score -= 10 } }
-    if ($Config.windows.installDesktop -and -not $result.codexDesktop.installed) { $score -= 15 }
-    if ($Config.windows.installTerminal -and -not $result.windowsTerminal.app.installed) { $score -= 10 }
-    if ($Config.windows.installUiGit -and -not $result.git.installed) { $score -= 5 }
-    if ($Config.windows.installGitHubCli -and -not $result.githubCli.installed) { $score -= 5 }
-    if ($isWslFirst) {
-        if (-not $wsl.distributionWsl2) { $score -= 25 }
-        elseif ($wsl.defaultDistribution -ne $wsl.distribution) { $score -= 10 }
-        if ($DeepWsl -and $wslTools.available) {
-            $score -= [math]::Min(30, (@($wslTools.missingRequiredCommands).Count + @($wslTools.nonNativeCommands).Count) * 5)
-            if (-not $wslTools.codeRootExists) { $score -= 5 }
-            if (-not $wslTools.globalAgentsReady) { $score -= 5 }
-            if (-not $wslTools.verifyCommandReady) { $score -= 5 }
-        }
-        elseif ($DeepWsl) { $score -= 20 }
-    }
-    else {
-        if ($Config.toolchains.node.enabled) {
-            foreach ($required in @($result.node, $result.npm)) { if (-not $required.installed) { $score -= 5 } }
-        }
-        if ($Config.toolchains.python.enabled) {
-            foreach ($required in @($result.python, $result.uv)) { if (-not $required.installed) { $score -= 5 } }
-        }
-        if ($Config.toolchains.docker.enabled -and -not $result.docker.installed) { $score -= 5 }
-    }
-    if (-not $isWslFirst -and $result.path.conflicts.Count -gt 0) {
-        $score -= [math]::Min(15, $result.path.conflicts.Count * 3)
-    }
-    $result.healthScore = [math]::Max(0, $score)
-    $result.healthLabel = if ($isWslFirst -and $wslTools.readiness -eq 'Unknown') { '尚未完整检查' } else { Get-HealthLabel -Score $result.healthScore }
+    # Keep the JSON field for consumers, but report evidence instead of an arbitrary score.
+    $result.healthScore = $null
+    $result.healthLabel = if ($result.partial) { '检查未完成' }
+        elseif ($isWslFirst -and $wslTools.readiness -eq 'Unknown') { '尚未完整检查' }
+        elseif ($isWslFirst -and $wslTools.readiness -eq 'NotReady') { '需要设置或修复' }
+        else { '检查完成' }
     $object = [pscustomobject]$result
     Write-SetupLog -Message '环境检测完成' -Data $object
     return $object
@@ -1276,6 +1328,6 @@ function Get-CodexSetupDetection {
 Export-ModuleMember -Function @(
     'Get-CodexSetupDetection', 'Get-ProjectRecommendation',
     'Get-CommandInfoSafe', 'Test-IsAppExecutionAlias', 'Get-PathDiagnostics',
-    'Get-HealthLabel', 'Get-ToolInstallationRoot', 'Get-WslToolchainInfo', 'Invoke-DetectionStage',
-    'Get-WslNetworkInfo'
+    'Get-ToolInstallationRoot', 'Get-WslToolchainInfo', 'Invoke-DetectionStage',
+    'Get-WslNetworkInfo', 'Get-WslInfo', 'Resolve-WslDistribution'
 )

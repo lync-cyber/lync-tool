@@ -1,0 +1,5 @@
+# Runtime state is stored outside the checkout. Ignore leftovers from older runs.
+/logs/
+/backups/
+# Temporary WSL test homes, normally removed by the test runner.
+/.test-home.*/

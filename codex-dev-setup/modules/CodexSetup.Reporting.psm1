@@ -58,7 +58,7 @@ function Get-ReportResultLabel {
 
 function Add-ReportTableRow {
     param(
-        [Parameter(Mandatory)][System.Collections.Generic.List[string]]$Lines,
+        [Parameter(Mandatory)][AllowEmptyCollection()][AllowEmptyString()][System.Collections.Generic.List[string]]$Lines,
         [Parameter(Mandatory)][string]$Name,
         [Parameter(Mandatory)][string]$Status,
         [AllowNull()]$Detail
@@ -85,7 +85,7 @@ function New-CodexSetupReport {
     $mode = [string](Get-SetupProperty $Plan 'environmentMode' $Config.environmentMode)
     $actions = @(Get-SetupProperty $Plan 'actions' @())
     $issues = @(Get-SetupProperty $effectiveDetection 'issues' @())
-    $remaining = if ($null -ne $RemainingPlan) { @(Get-SetupProperty $RemainingPlan 'actions' @()) } else { @() }
+    $remaining = @(if ($null -ne $RemainingPlan) { Get-SetupProperty $RemainingPlan 'actions' @() })
     $remainingSetupCount = $remaining.Count
     $completionPlan = if ($null -ne $RemainingPlan) { $RemainingPlan } else { $Plan }
     $blockingReasons = @(Get-SetupProperty $completionPlan 'blockingReasons' @())
@@ -97,12 +97,14 @@ function New-CodexSetupReport {
     $lines.Add("- 目标环境：**$(Get-SetupProperty $Plan 'environmentLabel' $mode)**")
     $lines.Add("- 检查范围：$(Get-SetupProperty $effectiveDetection 'detectionMode' '未知')")
     $healthLabel = [string](Get-SetupProperty $effectiveDetection 'healthLabel' '未评级')
-    if ($healthLabel -eq '尚未完整检查') { $lines.Add('- 环境状态：**尚未完整检查**') }
-    else { $lines.Add("- 环境状态：**$healthLabel（$(Get-SetupProperty $effectiveDetection 'healthScore' 0)/100）**") }
-    $runState = if ($WhatIfRun) { '预览完成' } elseif ($resultSummary.failed -gt 0) { '有失败项' } elseif ($blockingReasons.Count -gt 0) { '存在必须先解决的阻断' } elseif ($resultSummary.restartRequired -gt 0) { '需要重启后继续' } elseif ($resultSummary.needsAttention -gt 0 -or $remainingSetupCount -gt 0) { '仍有待处理项' } elseif ($resultSummary.skipped -gt 0) { '有未执行项' } else { '执行完成' }
+    $lines.Add("- 检查状态：**$healthLabel**")
+    $runState = if ($resultSummary.restartRequired -gt 0) { '需要重启后继续' } elseif ($WhatIfRun) { '检查完成，未应用设置' } elseif ($resultSummary.failed -gt 0) { '有失败项' } elseif ($blockingReasons.Count -gt 0) { '存在待处理问题' } elseif ($resultSummary.needsAttention -gt 0 -or $remainingSetupCount -gt 0) { '仍有待处理项' } elseif ($resultSummary.skipped -gt 0) { '有未执行项' } else { '自动设置已完成；Desktop 需人工验证' }
     $lines.Add("- 本次状态：$runState")
     $summaryText = Get-CodexSetupResultSummaryText -Summary $resultSummary
     if ($summaryText) { $lines.Add("- 执行结果：$summaryText") }
+    foreach ($pending in @($Results | Where-Object status -eq 'RestartRequired')) {
+        $lines.Add('- 待重启：' + [string](Get-SetupProperty $pending.detail 'summary' $pending.id))
+    }
 
     $lines.Add('')
     $lines.Add('## 环境状态')
@@ -112,7 +114,7 @@ function New-CodexSetupReport {
     Add-ReportTableRow $lines 'Windows 11' $(if (Get-SetupProperty $effectiveDetection.windows 'isWindows11' $false) { '可用' } else { '不符合' }) "$(Get-SetupProperty $effectiveDetection.windows 'caption' '') build $(Get-SetupProperty $effectiveDetection.windows 'build' '')"
     Add-ReportTableRow $lines 'Codex Desktop' $(if (Get-SetupProperty $effectiveDetection.codexDesktop 'installed' $false) { '可用' } elseif (Get-SetupProperty $effectiveDetection.codexDesktop 'error' '') { '检查失败' } else { '未安装' }) ''
     $terminalInstalled = (Get-SetupProperty $effectiveDetection.windowsTerminal.command 'installed' $false) -or (Get-SetupProperty $effectiveDetection.windowsTerminal.app 'installed' $false)
-    Add-ReportTableRow $lines 'Windows Terminal' $(if ($terminalInstalled) { '可用' } else { '未安装' }) ''
+    Add-ReportTableRow $lines 'Windows Terminal' $(if ($terminalInstalled) { '可用' } elseif (Get-SetupProperty $effectiveDetection.windowsTerminal.app 'error' '') { '检查失败' } else { '未安装' }) ''
     Add-ReportTableRow $lines 'PowerShell 7' (Get-ReportCommandState $effectiveDetection.powershell7) (Get-SetupProperty $effectiveDetection.powershell7 'version' '')
     Add-ReportTableRow $lines 'Git for Windows' (Get-ReportCommandState $effectiveDetection.git) (Get-SetupProperty $effectiveDetection.git 'version' '')
     Add-ReportTableRow $lines 'GitHub CLI（Windows）' (Get-ReportCommandState $effectiveDetection.githubCli) (Get-SetupProperty $effectiveDetection.githubCli 'version' '')
@@ -132,7 +134,7 @@ function New-CodexSetupReport {
         $wslTools = Get-SetupProperty $effectiveDetection 'wslTools'
         $toolchainState = switch ([string](Get-SetupProperty $wslTools 'readiness' 'Unknown')) { 'Ready' { '符合当前配置' } 'NotReady' { '需要配置' } default { '尚未完整检查' } }
         $missing = @((Get-SetupProperty $wslTools 'missingRequiredCommands' @()) + (Get-SetupProperty $wslTools 'nonNativeCommands' @())) -join '、'
-        Add-ReportTableRow $lines 'WSL 开发工具链' $toolchainState $(if ($missing) { "缺失或非 Linux 原生：$missing" } else { '' })
+        Add-ReportTableRow $lines 'WSL 开发工具链' $toolchainState $(if ($missing) { "缺失或非 Linux 原生：$missing" } else { Get-SetupProperty $wslTools 'reason' '' })
     }
     else {
         foreach ($entry in @(
@@ -193,7 +195,7 @@ function New-CodexSetupReport {
         foreach ($reason in @(Get-SetupProperty $project 'reasons' @())) { $lines.Add("- $reason") }
     }
 
-    $warnings = @(Get-SetupProperty $Plan 'warnings' @())
+    $warnings = @(Get-SetupProperty $completionPlan 'warnings' @())
     if ($blockingReasons.Count -gt 0 -or $warnings.Count -gt 0 -or $issues.Count -gt 0) {
         $lines.Add('')
         $lines.Add('## 待处理问题')

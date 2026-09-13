@@ -13,14 +13,14 @@ function Convert-WindowsPathToWsl {
     param([Parameter(Mandatory)][string]$Path, [string]$ExpectedDistro)
     $full = [System.IO.Path]::GetFullPath($Path)
     if ($full -match '^([A-Za-z]):\\(.*)$') {
-        return "/mnt/$($matches[1].ToLowerInvariant())/$($matches[2].Replace('\\','/'))"
+        return "/mnt/$($matches[1].ToLowerInvariant())/$($matches[2].Replace('\','/'))"
     }
     if ($full -match '^\\\\(?:wsl\.localhost|wsl\$)\\([^\\]+)\\(.*)$') {
         $pathDistro = $matches[1]
         if ($ExpectedDistro -and $pathDistro -ine $ExpectedDistro) {
             throw "文件位于 $pathDistro，但目标发行版是 $ExpectedDistro。"
         }
-        return '/' + $matches[2].Replace('\\', '/')
+        return '/' + $matches[2].Replace('\', '/')
     }
     throw "无法转换为 WSL 路径：$Path"
 }
@@ -359,7 +359,7 @@ function Select-CodexConfigurationPreset {
         Write-Host '    [2]       只读：仅查看文件，按需确认'
         Write-Host '    [3]       完全访问：可访问所有文件，按需确认'
         Write-Host '    [B]       返回'
-        switch ((Read-Host '  请选择').Trim().ToUpperInvariant()) {
+        switch (Read-SetupMenuChoice -Prompt '  请选择 [默认 1]' -Choices @('1', '2', '3', 'B') -Default '1') {
             { $_ -in @('', '1') } {
                 $Config.codex.sandboxMode = 'workspace-write'
                 $Config.codex.approvalPolicy = 'on-request'
@@ -373,12 +373,10 @@ function Select-CodexConfigurationPreset {
                 return $true
             }
             '3' {
-                if (Confirm-SetupChoice -Prompt '仅为可信项目启用完全访问？' -DefaultYes:$false) {
-                    $Config.codex.sandboxMode = 'danger-full-access'
-                    $Config.codex.approvalPolicy = 'on-request'
-                    $Config.codex.windowsSandbox = 'elevated'
-                    return $true
-                }
+                $Config.codex.sandboxMode = 'danger-full-access'
+                $Config.codex.approvalPolicy = 'on-request'
+                $Config.codex.windowsSandbox = 'elevated'
+                return $true
             }
             'B' { return $false }
             default { Write-SetupStatus -Kind Warning -Message '无效选择。' }
@@ -579,13 +577,28 @@ function Set-ProjectTemplates {
     $skippedFiles = [System.Collections.Generic.List[string]]::new()
     $changedFiles = [System.Collections.Generic.List[string]]::new()
     $unchangedFiles = [System.Collections.Generic.List[string]]::new()
+    $replacements = @()
+    foreach ($entry in $templates.GetEnumerator()) {
+        if (Test-Path -LiteralPath $entry.Key -PathType Leaf) {
+            $current = Get-Content -LiteralPath $entry.Key -Raw -Encoding utf8
+            if ($current -ne ($entry.Value.TrimEnd("`r", "`n") + [Environment]::NewLine)) {
+                $replacements += [string]$entry.Key
+            }
+        }
+    }
+    $replaceExisting = $false
+    if ($replacements.Count -gt 0 -and -not $NonInteractive) {
+        Write-Host '以下现有项目文件与模板不同：' -ForegroundColor Yellow
+        foreach ($path in $replacements) { Write-Host "  $path" }
+        $replaceExisting = Confirm-SetupChoice -Prompt '备份并替换以上文件？选择 N 将保留它们，仍创建缺少的文件' -DefaultYes:$false
+    }
     foreach ($entry in $templates.GetEnumerator()) {
         $path = [string]$entry.Key
         if (Test-Path -LiteralPath $path -PathType Leaf) {
             $current = Get-Content -LiteralPath $path -Raw -Encoding utf8
             $desired = $entry.Value.TrimEnd("`r", "`n") + [Environment]::NewLine
             if ($current -eq $desired) { $unchangedFiles.Add($path); continue }
-            if (-not (Confirm-SetupChoice -Prompt "文件已存在，是否备份并替换？$path" -DefaultYes:$false -NonInteractive:$NonInteractive)) {
+            if ($path -notin $replacements -or -not $replaceExisting) {
                 $skippedFiles.Add($path)
                 continue
             }
@@ -599,6 +612,25 @@ function Set-ProjectTemplates {
     }
 }
 
+function Install-WslDistribution {
+    param([Parameter(Mandatory)][string]$Distribution, [switch]$NonInteractive)
+    if ($NonInteractive) {
+        return New-ActionOutcome -Status NeedsAttention -Summary "首次安装需要交互创建 Linux 用户；请运行 wsl --install --distribution $Distribution 完成初始化" -Data $null
+    }
+    Write-Host '  安装程序可能请求提升权限并创建 Linux 用户；若进入 Linux Shell，输入 exit 返回并继续。' -ForegroundColor DarkGray
+    $exitCode = Invoke-InteractiveExternalSetupCommand -Command 'wsl.exe' -Arguments @('--install', '--distribution', $Distribution) -AllowFailure
+    if ($exitCode -notin @(0, 3010)) { throw "WSL 安装失败（exit=$exitCode）；请查看上方输出。若当前 WSL 不识别 $Distribution，请运行 wsl --update 更新 WSL，再用 wsl --list --online 确认可安装名称；新式 .wsl 镜像需要 WSL 2.4.4 或更新版本。" }
+    Add-RollbackNote '新发行版由 Windows WSL 保留并管理。'
+    if ($exitCode -eq 3010) {
+        return New-ActionOutcome -Status RestartRequired -Summary 'Windows 要求重启电脑；重启后选择“开始或修复”继续' -Data @{ exitCode=$exitCode }
+    }
+    $state = Get-WslInfo -Distribution $Distribution
+    if ($state.state -eq 'Ready') {
+        return New-ActionOutcome -Status Changed -Summary "$Distribution 已就绪，继续配置开发工具链" -Data $state
+    }
+    return New-ActionOutcome -Status NeedsAttention -Summary "安装程序已结束，但 $Distribution 尚未就绪；请按安装程序提示完成重启或初始化，再在结果页重新检查" -Data $state
+}
+
 function Invoke-SetupAction {
     [CmdletBinding()]
     param(
@@ -610,7 +642,7 @@ function Invoke-SetupAction {
         'WingetInstall'          { Install-WingetPackage -Action $Action }
         'PythonConfigure'        { Set-PythonWithUv }
         'WslSetDefaultVersion2'  { Set-WslDefaultVersion2 }
-        'WslInstallDistribution' { Invoke-ExternalSetupCommand -Command 'wsl.exe' -Arguments @('--install', '--distribution', [string]$Action.parameters.distro) | Out-Null; Add-RollbackNote '新发行版由 Windows WSL 保留并管理。'; New-ActionOutcome -Status RestartRequired -Summary '发行版安装已启动；请按 Windows 提示重启后再继续' -Data $null }
+        'WslInstallDistribution' { Install-WslDistribution -Distribution ([string]$Action.parameters.distro) -NonInteractive:$NonInteractive }
         'WslSetDefaultDistribution' { Set-WslDefaultDistribution -Distribution ([string]$Action.parameters.distro) }
         'WslConfigure'           { Invoke-WslSetup -Action $Action -Config $Config -NonInteractive:$NonInteractive }
         'WslNetworkConfigure'    { Set-WslNetworkingConfig -Config $Config }
@@ -627,48 +659,31 @@ function Invoke-CodexSetupPlan {
     param(
         [Parameter(Mandatory)]$Plan,
         [Parameter(Mandatory)]$Config,
-        [switch]$NonInteractive,
-        [switch]$ConfirmModules
+        [switch]$NonInteractive
     )
     $results = @()
     $blocked = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($module in @(Get-SetupOrderedModules -Actions $Plan.actions)) {
         $group = @($Plan.actions | Where-Object module -eq $module)
-        $runModule = $true
-        if ($ConfirmModules -and -not $NonInteractive -and -not $WhatIfPreference) {
-            if ($module -eq 'CodexConfig') {
-                Write-Host '[Y] 执行  [C] 自定义  [S/Enter] 跳过' -ForegroundColor DarkGray
-                $choice = (Read-Host '请选择').Trim().ToUpperInvariant()
-                if ($choice -eq 'C') { $runModule = Select-CodexConfigurationPreset -Config $Config }
-                elseif ($choice -notin @('Y', 'YES', '是', '确认')) { $runModule = $false }
-            }
-            else {
-                $runModule = Confirm-SetupChoice -Prompt "执行“$(Get-SetupModuleDisplayName -Module $module)”中的设置？" -DefaultYes:$false
-            }
-        }
         foreach ($action in $group) {
             $dependencies = @($action.dependsOn | Where-Object { $blocked.Contains([string]$_) })
-            if (-not $runModule -or $dependencies.Count -gt 0) {
+            if ($dependencies.Count -gt 0) {
                 [void]$blocked.Add([string]$action.id)
                 $dependencyTitles = @($Plan.actions | Where-Object { $_.id -in $dependencies } | ForEach-Object title)
                 $reason = if ($dependencies.Count -gt 0) { "前一步尚未完成：$($dependencyTitles -join '、')" } else { '已跳过此组操作。' }
                 $results += [pscustomobject]@{ id=$action.id; module=$module; status='Skipped'; error=$reason; detail=$null; durationMs=0 }
                 continue
             }
-            $isCritical = [bool]$action.critical -or
-                ($action.type -eq 'CodexGlobalConfig' -and $Config.codex.sandboxMode -eq 'danger-full-access')
-            if ($isCritical -and -not $NonInteractive -and -not $WhatIfPreference) {
+            # Routine host actions were reviewed in the plan. Only the global
+            # unrestricted-access setting needs a separate acknowledgement.
+            if ($action.type -eq 'CodexGlobalConfig' -and $Config.codex.sandboxMode -eq 'danger-full-access' -and
+                -not $NonInteractive -and -not $WhatIfPreference) {
                 Write-Host ''
                 Write-Host "高影响操作：$($action.title)" -ForegroundColor Yellow
                 Write-SetupWrappedText -Text $action.reason -FirstIndent '  影响：' -ContinuationIndent '        ' -ForegroundColor Yellow
                 Write-Host "  目标：$($action.target)" -ForegroundColor DarkGray
-                $criticalApproved = if ($action.type -eq 'CodexGlobalConfig' -and $Config.codex.sandboxMode -eq 'danger-full-access') {
-                    Write-Host '  这会修改用户级全局默认值，影响之后打开的所有 Codex 项目与任务。' -ForegroundColor Red
-                    (Read-Host '如要继续，请输入：启用全局高风险权限').Trim() -ceq '启用全局高风险权限'
-                }
-                else {
-                    Confirm-SetupChoice -Prompt '确认继续这项高影响操作？' -DefaultYes:$false
-                }
+                Write-Host '  这会修改用户级全局默认值，影响之后打开的所有 Codex 项目与任务。' -ForegroundColor Red
+                $criticalApproved = ([string](Read-Host '如要继续，请输入：启用全局高风险权限')).Trim() -ceq '启用全局高风险权限'
                 if (-not $criticalApproved) {
                     [void]$blocked.Add([string]$action.id)
                     $results += [pscustomobject]@{ id=$action.id; module=$module; status='Skipped'; error='用户未确认高影响操作。'; detail=$null; durationMs=0 }
@@ -1120,5 +1135,5 @@ function Invoke-CodexSetupRollback {
 
 Export-ModuleMember -Function @(
     'Invoke-CodexSetupPlan', 'Invoke-CodexSetupRollback', 'New-ProjectTemplateMap',
-    'Convert-WindowsPathToWsl', 'Set-WslNetworkingConfig'
+    'Convert-WindowsPathToWsl', 'Set-WslNetworkingConfig', 'Select-CodexConfigurationPreset', 'Invoke-InteractiveExternalSetupCommand'
 )

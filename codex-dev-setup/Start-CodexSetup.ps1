@@ -4,6 +4,7 @@ param(
     [ValidateSet('Wizard', 'Detect', 'Plan', 'Apply', 'ProjectInit', 'Export', 'Rollback')]
     [string]$Mode = 'Wizard',
     [string]$ConfigPath = (Join-Path $PSScriptRoot 'config\defaults.json'),
+    [string]$Distribution,
     [string]$ProjectPath,
     [string]$ExportPath,
     [string]$ResultJsonPath,
@@ -64,6 +65,10 @@ function Resolve-SetupConfiguration {
     param([Parameter(Mandatory)][string]$Path)
     $resolved = [System.IO.Path]::GetFullPath($Path)
     $config = Read-SetupConfig -Path $resolved
+    if (-not [string]::IsNullOrWhiteSpace($Distribution)) {
+        $config.wsl.distribution = $Distribution
+        [void](Assert-SetupConfiguration -Config $config)
+    }
     $config.paths.windowsProjects = [Environment]::ExpandEnvironmentVariables($config.paths.windowsProjects)
     return $config
 }
@@ -72,7 +77,12 @@ function Show-Banner {
     param([Parameter(Mandatory)]$Config)
     try { Clear-Host -ErrorAction Stop } catch { }
     Write-Host 'Codex 开发环境助手' -ForegroundColor Cyan
-    $modeText = if ($Config.environmentMode -eq 'WslFirst') { "WSL2 $($Config.wsl.distribution)" } else { 'Windows 原生开发环境' }
+    $distributionText = switch ($Config.wsl.distribution) {
+        'latest-stable' { 'Ubuntu 最新稳定版（按 WSL 安装目录选择）' }
+        'latest-lts' { 'Ubuntu 最新 LTS（按 WSL 安装目录选择）' }
+        default { $Config.wsl.distribution }
+    }
+    $modeText = if ($Config.environmentMode -eq 'WslFirst') { "WSL2 $distributionText" } else { 'Windows 原生开发环境' }
     Write-Host "目标环境：$modeText  ·  v$scriptVersion" -ForegroundColor White
     Write-Host ('=' * 72) -ForegroundColor DarkGray
     Write-Host ''
@@ -81,23 +91,13 @@ function Show-Banner {
 function Show-MainMenu {
     param([Parameter(Mandatory)]$Config)
     Write-Host '请选择操作'
-    Write-Host '  [1] 检查开发环境（推荐）' -ForegroundColor Green
-    Write-Host '      检查 Windows、Codex Desktop、Terminal 和 WSL 状态'
-    Write-Host '  [2] 设置开发环境'
-    Write-Host '      查找缺失项并引导完成设置'
+    Write-Host '  [1/Enter] 开始或修复（推荐）' -ForegroundColor Green
+    Write-Host '      检查 → 确认变更 → 设置 → 验证；已完成的步骤自动跳过'
+    Write-Host '  [2] 仅检查'
+    Write-Host '      完整检查并给出建议，不应用设置'
     Write-Host '  [3] 初始化项目配置'
     Write-Host '      为指定项目生成基础配置'
-    Write-Host '  [4] 导出设置'
-    Write-Host '      保存当前选择，供其他电脑复用'
-    Write-Host '  [5] 撤销上次设置'
-    Write-Host '      查看并恢复本工具上一次更改'
-    Write-Host '  [6] Codex Desktop 设置指南'
-    Write-Host '      查看 Codex Desktop 设置和重启验证步骤'
-    if ($Config.environmentMode -eq 'WslFirst') {
-        Write-Host '  [7] 完整检查 WSL 环境'
-        Write-Host '      启动 Ubuntu 并检查 Linux 工具链'
-    }
-    Write-Host '  [R] 重新检查'
+    Write-Host '  [M] 更多：导出设置、撤销更改、Desktop 指南'
     Write-Host '  [0] 退出'
 }
 
@@ -126,6 +126,10 @@ function Get-RecentRollbackManifest {
         if ($manifest.schemaVersion -eq 3 -and $manifest.completed -eq $true -and $manifest.hasChanges -eq $true -and
             [int]$manifest.changeCount -gt 0 -and [string]::IsNullOrWhiteSpace([string]$manifest.rolledBackAt)) {
             return $candidate.FullName
+        }
+        if ($manifest.schemaVersion -eq 3 -and $manifest.hasChanges -eq $true -and -not $manifest.completed -and
+            [string]::IsNullOrWhiteSpace([string]$manifest.rolledBackAt)) {
+            throw "最近一次更改尚未完整结束，不能自动跳过它撤销更早的运行。请先检查清单：$($candidate.FullName)；确认范围后使用 -Mode Rollback -RollbackManifest <清单路径> -AllowIncompleteRollback。"
         }
     }
     return $null
@@ -170,7 +174,7 @@ function Get-CachedSetupDetection {
             else {
                 '{0:N0}秒' -f [math]::Max(0, $age.TotalSeconds)
             }
-            Write-SetupStatus -Kind Info -Message "使用 $ageText 前的检查结果；如需重新检查，可在首页按 R。"
+            Write-SetupStatus -Kind Info -Message "使用 $ageText 前的检查结果；如需重新检查，可在结果页按 R。"
             return $cached.detection
         }
         [void]$script:detectionCache.Remove($cacheKey)
@@ -317,24 +321,10 @@ function Test-SetupProcessExitRequired {
     return $IsNonInteractive -or $WasModeExplicit -or -not [string]::IsNullOrWhiteSpace($MachineResultPath)
 }
 
-function Invoke-ReportShortcut {
-    param(
-        [Parameter(Mandatory)][ValidateSet('Open', 'Folder', 'Copy')][string]$Action,
-        [Parameter(Mandatory)][string]$ReportPath
-    )
-    try {
-        switch ($Action) {
-            'Open' { Start-Process -FilePath $ReportPath -ErrorAction Stop }
-            'Folder' { Start-Process -FilePath (Split-Path -Parent $ReportPath) -ErrorAction Stop }
-            'Copy' {
-                Set-Clipboard -Value $ReportPath -ErrorAction Stop
-                Write-SetupStatus -Kind Success -Message '报告路径已复制到剪贴板。'
-            }
-        }
-    }
-    catch {
-        Write-SetupStatus -Kind Warning -Message "无法完成报告操作：$($_.Exception.Message)"
-    }
+function Open-SetupReport {
+    param([Parameter(Mandatory)][string]$ReportPath)
+    try { Start-Process -FilePath $ReportPath -ErrorAction Stop }
+    catch { Write-SetupStatus -Kind Warning -Message "无法打开报告：$($_.Exception.Message)" }
 }
 
 function Show-WorkflowCompletion {
@@ -342,7 +332,6 @@ function Show-WorkflowCompletion {
 
     $workflowConfig = Get-SetupProperty -InputObject $WorkflowResult -Name 'config'
     $detection = $WorkflowResult.detection
-    $score = [int](Get-SetupProperty -InputObject $detection -Name 'healthScore' -Default 0)
     $healthLabel = [string](Get-SetupProperty -InputObject $detection -Name 'healthLabel' -Default '未评级')
     $mode = [string](Get-SetupProperty -InputObject $detection -Name 'detectionMode' -Default $(if ($WorkflowResult.deepDetection) { '完整' } else { '快速' }))
     $issues = @(Get-SetupProperty -InputObject $detection -Name 'issues' -Default @())
@@ -360,6 +349,7 @@ function Show-WorkflowCompletion {
     $remainingPlan = Get-SetupProperty -InputObject $WorkflowResult -Name 'remainingPlan'
     $completionPlan = if ($null -ne $remainingPlan) { $remainingPlan } else { $WorkflowResult.plan }
     $blockingReasons = @(Get-SetupProperty -InputObject $completionPlan -Name 'blockingReasons' -Default @())
+    $warnings = @(Get-SetupProperty -InputObject $completionPlan -Name 'warnings' -Default @())
     $remainingActions = @(
         if ($null -ne $remainingPlan) {
             Get-SetupProperty -InputObject $remainingPlan -Name 'actions' -Default @()
@@ -374,14 +364,13 @@ function Show-WorkflowCompletion {
     Write-Host ''
     $isProjectWorkflow = (Get-SetupProperty -InputObject $WorkflowResult -Name 'workflowMode' -Default '') -eq 'ProjectInit'
     $completionTitle = if ($WorkflowResult.whatIfRun -and $blockingReasons.Count -eq 0) { '预览完成' } elseif ($resultSummary.failed -gt 0) { '操作未完全完成' } elseif ($blockingReasons.Count -gt 0) { '操作已结束，仍有待处理项' } elseif ($resultSummary.restartRequired -gt 0) { '需要重启后继续' } elseif ($resultSummary.needsAttention -gt 0 -or $resultSummary.skipped -gt 0 -or $remainingSetupCount -gt 0) { '操作已结束，仍有待处理项' } elseif ($resultSummary.total -eq 0) { '没有需要执行的操作' } else { '设置完成' }
+    if ($WorkflowResult.whatIfRun -and $WorkflowResult.workflowMode -eq 'Detect') { $completionTitle = '检查完成，未应用设置' }
+    if ($resultSummary.total -gt 0 -and $resultSummary.skipped -eq $resultSummary.total) { $completionTitle = '已跳过，未应用设置' }
+    if ($resultSummary.restartRequired -gt 0) { $completionTitle = '需要重启后继续' }
     $completionColor = if ($resultSummary.failed -gt 0) { 'Red' } elseif ($WorkflowResult.whatIfRun -or $blockingReasons.Count -gt 0 -or $resultSummary.restartRequired -gt 0 -or $resultSummary.needsAttention -gt 0 -or $resultSummary.skipped -gt 0 -or $remainingSetupCount -gt 0) { 'Yellow' } else { 'Green' }
     Write-Host $completionTitle -ForegroundColor $completionColor
     Write-Host ('─' * 48) -ForegroundColor DarkGray
-    $wslReadiness = [string](Get-SetupProperty -InputObject $wslToolInfo -Name 'readiness' -Default 'Unknown')
-    if ($workflowConfig.environmentMode -eq 'WslFirst' -and $wslReadiness -eq 'Unknown') {
-        Write-Host '环境状态：尚未完整检查'
-    }
-    else { Write-Host "环境状态：$healthLabel（$score/100）" }
+    Write-Host "检查状态：$healthLabel"
     Write-Host "检查范围：$mode"
     if ($remainingActions.Count -gt 0) {
         $visibleActions = @($remainingActions | ForEach-Object { Get-SetupProperty -InputObject $_ -Name 'title' -Default $_.id } | Select-Object -First 3)
@@ -417,33 +406,33 @@ function Show-WorkflowCompletion {
         }
         Write-Host '  查看项目根目录的 AGENTS.md，并按其中命令继续。'
     }
-    elseif ($WorkflowResult.whatIfRun -and $blockingReasons.Count -eq 0) {
+    elseif ($WorkflowResult.whatIfRun -and $blockingReasons.Count -eq 0 -and $resultSummary.restartRequired -eq 0) {
         Write-Host '  1. 查看上方计划和详细报告。'
-        Write-Host '  2. 返回首页选择“设置开发环境”开始执行。'
+        Write-Host '  2. 在下方选择“继续设置”，无需退出工具。'
     }
     elseif ($resultSummary.restartRequired -gt 0 -and $blockingReasons.Count -eq 0) {
         $restartIds = @($WorkflowResult.results | Where-Object status -eq 'RestartRequired' | ForEach-Object id)
         if ('InstallWslDistribution' -in $restartIds) {
             Write-Host '  1. 保存工作并按 Windows 提示重启电脑。' -ForegroundColor Yellow
-            Write-Host '  2. 重启后再次运行“开始设置开发环境”；工具会从未完成处继续。'
+            Write-Host '  2. 重启电脑后打开工具，直接按 Enter；已完成的步骤自动跳过。'
         }
         else {
             Write-Host '  1. 保存所有 WSL 工作并完全关闭使用 WSL 的程序。' -ForegroundColor Yellow
             Write-Host '  2. 在 Windows PowerShell 运行 wsl --shutdown。'
-            Write-Host '  3. 再次运行“设置开发环境”完成验证。'
+            Write-Host '  3. 回到此页选择“重新检查”，确认下一步。'
         }
     }
     elseif ($blockingReasons.Count -gt 0 -or $resultSummary.failed -gt 0 -or $resultSummary.needsAttention -gt 0) {
         Write-Host '  1. 先查看详细结果中的“未完成”项目。' -ForegroundColor Yellow
-        Write-Host '  2. 处理提示的问题后，再次选择“开始设置开发环境”；工具会重新检查当前状态。'
+        Write-Host '  2. 处理提示后，在下方选择“继续设置”或“重新检查”。'
     }
     elseif ($resultSummary.skipped -gt 0) {
         Write-Host '  1. 本次有项目未执行；当前环境可能尚未完整准备。' -ForegroundColor Yellow
-        Write-Host '  2. 查看详细结果，确认是否需要返回首页继续设置。'
+        Write-Host '  2. 如需处理未执行项，在下方选择“继续设置”。'
     }
     elseif ($remainingSetupCount -gt 0) {
         Write-Host '  1. 仍有设置需要处理。' -ForegroundColor Yellow
-        Write-Host '  2. 查看详细结果，处理提示后重新运行设置。'
+        Write-Host '  2. 处理提示后，在下方选择“继续设置”。'
     }
     elseif ($resultSummary.total -eq 0) {
         Write-Host '  本次没有可执行项目；请查看上方提示或详细结果。' -ForegroundColor Yellow
@@ -461,14 +450,68 @@ function Show-WorkflowCompletion {
 
     while ($true) {
         Write-Host ''
-        Write-Host '[R] 查看详细结果  [L] 打开结果所在目录  [C] 复制结果路径  [Enter] 返回首页'
-        $choice = (Read-Host '请选择').Trim().ToUpperInvariant()
+        $choices = @('R', 'D', 'G')
+        if (@($WorkflowResult.results | Where-Object { $_.id -eq 'ConfigureWslNetwork' -and $_.status -eq 'RestartRequired' }).Count -gt 0) {
+            Write-Host '[W] 停止 WSL 并重新验证（会停止所有发行版，请先保存 WSL 中的工作）' -ForegroundColor Yellow
+            $choices += 'W'
+        }
+        if ($remainingSetupCount -gt 0 -or $blockingReasons.Count -gt 0) {
+            Write-Host '[1] 继续设置  [R] 重新检查  [D] 详细报告  [G] Desktop 指南  [Enter] 返回首页'
+            $choices += '1'
+        }
+        else { Write-Host '[R] 重新检查  [D] 详细报告  [G] Desktop 指南  [Enter] 返回首页' }
+        $choice = Read-SetupMenuChoice -Prompt '请选择 [默认返回]' -Choices $choices
         switch ($choice) {
             '' { return }
-            'R' { Invoke-ReportShortcut -Action Open -ReportPath $WorkflowResult.reportPath }
-            'L' { Invoke-ReportShortcut -Action Folder -ReportPath $WorkflowResult.reportPath }
-            'C' { Invoke-ReportShortcut -Action Copy -ReportPath $WorkflowResult.reportPath }
-            default { Write-SetupStatus -Kind Warning -Message "无效选项：$choice" }
+            '1' { return 'Apply' }
+            'R' { return 'Detect' }
+            'W' { return 'RestartWsl' }
+            'D' { Open-SetupReport -ReportPath $WorkflowResult.reportPath }
+            'G' { Open-CodexSettingsGuide -Config $workflowConfig }
+        }
+    }
+}
+
+function Show-WorkflowSession {
+    param([Parameter(Mandatory)]$WorkflowResult, [AllowNull()][string]$TargetProject)
+    $projectOnly = $WorkflowResult.workflowMode -eq 'ProjectInit'
+    $pendingRestarts = @()
+    while ($true) {
+        $pendingRestarts = @((Get-SetupProperty $WorkflowResult 'results' @()) | Where-Object status -eq 'RestartRequired')
+        $next = Show-WorkflowCompletion -WorkflowResult $WorkflowResult
+        if (-not $next) { return }
+        if ($next -eq 'RestartWsl') {
+            try { Invoke-InteractiveExternalSetupCommand -Command 'wsl.exe' -Arguments @('--shutdown') | Out-Null }
+            catch { Write-SetupStatus -Kind Error -Message $_.Exception.Message; continue }
+            $pendingRestarts = @($pendingRestarts | Where-Object id -ne 'ConfigureWslNetwork')
+            $next = 'Detect'
+        }
+        $nextMode = if ($projectOnly) { 'ProjectInit' } else { $next }
+        $WorkflowResult = Invoke-Workflow -Config $WorkflowResult.config -WorkflowMode $nextMode -TargetProject $TargetProject `
+            -RealApply:($next -eq 'Apply') -DeepDetection:($nextMode -ne 'ProjectInit') -ForceRefresh:$true -PendingRestarts $pendingRestarts
+    }
+}
+
+function Show-SetupMoreMenu {
+    param([Parameter(Mandatory)]$Config)
+    while ($true) {
+        Write-Host ''
+        Write-Host '[1] 导出当前设置  [2] 撤销上次更改  [3] Desktop 指南  [Enter] 返回首页'
+        switch (Read-SetupMenuChoice -Prompt '请选择 [默认返回]' -Choices @('1', '2', '3')) {
+            '' { return }
+            '1' {
+                $path = if ($ExportPath) { $ExportPath } else { Join-Path (Get-Location) 'codex-setup.export.json' }
+                Write-SetupStatus -Kind Info -Message "导出当前版本选择：$($Config.wsl.distribution)；已检查的会话使用固定版本，便于复现。"
+                $exportResult = Export-SetupConfig -Config $Config -Path $path -Confirm:$false
+                Write-SetupStatus -Kind Info -Message "导出结果：$($exportResult.status)；$path"
+            }
+            '2' {
+                $manifest = if ($RollbackManifest) { $RollbackManifest } else { Get-RecentRollbackManifest }
+                if (-not $manifest) { Write-SetupStatus -Kind Info -Message '没有可撤销的更改。'; continue }
+                Invoke-CodexSetupRollback -ManifestPath $manifest -Confirm:$false | Out-Null
+                $script:detectionCache.Clear()
+            }
+            '3' { Open-CodexSettingsGuide -Config $Config }
         }
     }
 }
@@ -480,45 +523,87 @@ function Invoke-Workflow {
         [AllowNull()][string]$TargetProject,
         [bool]$RealApply,
         [bool]$DeepDetection = $false,
-        [bool]$ForceRefresh = $false
+        [bool]$ForceRefresh = $false,
+        [AllowEmptyCollection()][object[]]$PendingRestarts = @()
     )
     $runtime = Initialize-SetupRuntime
     $succeeded = $false
     try {
+        if ($Config.environmentMode -eq 'WslFirst' -and $Config.wsl.distribution -like 'latest-*') {
+            $requestedDistribution = $Config.wsl.distribution
+            Write-SetupStatus -Kind Info -Message "正在查询 Ubuntu 正式版本与 WSL 安装目录（$requestedDistribution）。"
+            # Pin this shared session config before detection, planning, and continuation.
+            $Config.wsl.distribution = Resolve-WslDistribution -Distribution $requestedDistribution
+            Write-SetupStatus -Kind Info -Message "本次目标：$($Config.wsl.distribution)；已有其他发行版不会被升级或删除。"
+        }
         $detection = Get-CachedSetupDetection -TargetProject $TargetProject -DeepDetection:$DeepDetection -ForceRefresh:$ForceRefresh -Config $Config
-        if ($WorkflowMode -eq 'Apply' -and -not $NonInteractive -and $Config.environmentMode -eq 'WslFirst' -and
-            $Config.wsl.networking.enabled -and $Config.wsl.networking.manageWslConfig -and
-            $detection.wsl.distributionWsl2 -and [int]$detection.windows.build -ge 22621) {
-            Select-WslNetworkConfiguration -Config $Config -Detection $detection
+        $effectiveWhatIf = -not $RealApply -or [bool]$WhatIfPreference
+        $applyApproved = $true
+        while ($true) {
+            $plan = Get-CodexSetupPlan -Detection $detection -Config $Config -ProjectPath $TargetProject
+            if ($WorkflowMode -eq 'ProjectInit') {
+                $plan.actions = @($plan.actions | Where-Object module -eq 'Project')
+                $plan.warnings = @($plan.warnings | Where-Object { [string]$_ -match '^项目' })
+                $plan.blockingReasons = @($plan.blockingReasons | Where-Object { [string]$_ -match '^项目' })
+                $plan.information = @()
+                $plan.skipped = @()
+                $plan.afterSetup = @()
+            }
+            Show-CodexSetupPlan -Plan $plan
+            if ($effectiveWhatIf -or $NonInteractive -or $plan.actions.Count -eq 0) { break }
+            $choices = @('Y', 'S')
+            $customText = ''
+            if ($WorkflowMode -ne 'ProjectInit') { $choices += 'C'; $customText = '  [C] 自定义 Codex 权限' }
+            Write-Host "[Y] 执行以上 $($plan.actions.Count) 项变更$customText  [S/Enter] 跳过"
+            $choice = Read-SetupMenuChoice -Prompt '请选择 [默认 S]' -Choices $choices -Default 'S'
+            if ($choice -eq 'C') {
+                if (Select-CodexConfigurationPreset -Config $Config) {
+                    $detection = Get-CachedSetupDetection -TargetProject $TargetProject -DeepDetection:$DeepDetection -ForceRefresh:$false -Config $Config
+                }
+                continue
+            }
+            $applyApproved = $choice -eq 'Y'
+            break
         }
-        $plan = Get-CodexSetupPlan -Detection $detection -Config $Config -ProjectPath $TargetProject
-        if ($WorkflowMode -eq 'ProjectInit') {
-            $plan.actions = @($plan.actions | Where-Object module -eq 'Project')
-            $plan.warnings = @($plan.warnings | Where-Object { [string]$_ -match '^项目' })
-            $plan.information = @()
-            $plan.skipped = @()
-            $plan.afterSetup = @()
-        }
-        Show-CodexSetupPlan -Plan $plan
         $results = @()
         $remainingPlan = $null
-        $effectiveWhatIf = -not $RealApply -or [bool]$WhatIfPreference
         if ($WorkflowMode -in @('Plan', 'Apply', 'ProjectInit')) {
             if ($effectiveWhatIf) {
                 Write-SetupStatus -Kind Info -Message '当前为预览，下面展示执行计划。'
                 $results = @(Invoke-CodexSetupPlan -Plan $plan -Config $Config -NonInteractive:$NonInteractive -WhatIf -InformationAction SilentlyContinue)
+            }
+            elseif (-not $applyApproved) {
+                $results = @($plan.actions | ForEach-Object {
+                    [pscustomobject]@{ id=$_.id; module=$_.module; status='Skipped'; error='用户跳过本次设置。'; detail=$null; durationMs=0 }
+                })
+                Write-SetupStatus -Kind Info -Message '已跳过，未应用设置。'
             }
             else {
                 if ($Config.codex.sandboxMode -eq 'danger-full-access') {
                     Write-SetupStatus -Kind Warning -Message '将修改用户级全局权限默认值，影响之后打开的所有 Codex 项目与任务；执行前还会要求单独确认。'
                 }
                 $results = @(Invoke-CodexSetupPlan -Plan $plan -Config $Config -NonInteractive:$NonInteractive `
-                    -ConfirmModules:($Config.preferences.moduleConfirmation -eq 'Prompt') -Confirm:$false)
+                    -Confirm:$false)
             }
         }
         if (-not $effectiveWhatIf) {
             $remainingPlan = Get-RemainingSetupPlan -Plan $plan -Results $results
+            if (@($results | Where-Object status -eq 'Changed').Count -gt 0) {
+                Write-SetupStatus -Kind Info -Message '正在验证设置结果。'
+                $detection = Get-CachedSetupDetection -TargetProject $TargetProject -DeepDetection:$DeepDetection -ForceRefresh:$true -Config $Config
+                $verifiedPlan = Get-CodexSetupPlan -Detection $detection -Config $Config -ProjectPath $TargetProject
+                if ($WorkflowMode -eq 'ProjectInit') {
+                    $verifiedPlan.actions = @($verifiedPlan.actions | Where-Object module -eq 'Project')
+                    $verifiedPlan.blockingReasons = @($verifiedPlan.blockingReasons | Where-Object { [string]$_ -match '^项目' })
+                }
+                # Project templates are generated on demand; the writer already verified them.
+                $completedProjects = @($results | Where-Object { $_.module -eq 'Project' -and $_.status -in @('Changed', 'NoChange') })
+                $remainingPlan = Get-RemainingSetupPlan -Plan $verifiedPlan -Results $completedProjects
+            }
         }
+        # Reading the updated .wslconfig cannot prove that an existing VM restarted.
+        $pendingIds = @($PendingRestarts | ForEach-Object id)
+        $results = @($results | Where-Object { $_.id -notin $pendingIds }) + $PendingRestarts
         $reportPath = New-CodexSetupReport -Detection $detection -Plan $plan -Results $results -Config $Config -WhatIfRun:$effectiveWhatIf `
             -RemainingPlan $remainingPlan
         Write-SetupStatus -Kind Success -Message "报告已生成：$reportPath"
@@ -557,83 +642,35 @@ try {
 
     if ($Mode -eq 'Wizard') {
         if ($NonInteractive) { throw 'Wizard 模式需要交互；无人值守时请使用 -Mode Plan/Apply/Detect。' }
-        $firstApplyPreviewPending = [bool]$config.preferences.firstRunWhatIf
         while ($true) {
             Show-Banner -Config $config
             Show-MainMenu -Config $config
-            $selection = Read-Host '请选择 [默认 1]'
-            if ([string]::IsNullOrWhiteSpace($selection)) { $selection = '1' }
-            $selection = $selection.Trim().ToUpperInvariant()
-            $completionShown = $false
-            switch ($selection) {
-                '0' { return }
-                '1' {
-                    $workflowResult = Invoke-Workflow -Config $config -WorkflowMode Plan -TargetProject $ProjectPath -RealApply:$false -DeepDetection:$false
-                    Show-WorkflowCompletion -WorkflowResult $workflowResult
-                    $completionShown = $true
-                }
-                '2' {
-                    if ($firstApplyPreviewPending) {
-                        $firstApplyPreviewPending = $false
-                        Write-SetupStatus -Kind Info -Message '首次设置先展示执行计划。'
-                        $workflowResult = Invoke-Workflow -Config $config -WorkflowMode Plan -TargetProject $ProjectPath -RealApply:$false -DeepDetection:$true
-                        Show-WorkflowCompletion -WorkflowResult $workflowResult
-                        $completionShown = $true
-                        continue
-                    }
-                    $confirmed = Confirm-SetupChoice -Prompt '执行以上设置？后续将按模块确认' -DefaultYes:$false
-                    if ($confirmed) {
+            $selection = Read-SetupMenuChoice -Prompt '请选择 [默认 1]' -Choices @('1', '2', '3', 'M', '0') -Default '1'
+            try {
+                switch ($selection) {
+                    '0' { return }
+                    '1' {
+                        Write-SetupStatus -Kind Info -Message '正在检查环境并生成计划；确认前不会应用设置。'
                         $workflowResult = Invoke-Workflow -Config $config -WorkflowMode Apply -TargetProject $ProjectPath -RealApply:$true -DeepDetection:$true
-                        Show-WorkflowCompletion -WorkflowResult $workflowResult
-                        $completionShown = $true
+                        Show-WorkflowSession -WorkflowResult $workflowResult -TargetProject $ProjectPath
                     }
-                    else { Write-SetupStatus -Kind Info -Message '已取消。' }
-                }
-                '3' {
-                    if ([string]::IsNullOrWhiteSpace($ProjectPath)) { $ProjectPath = Read-Host '请输入项目文件夹的完整路径' }
-                    if ([string]::IsNullOrWhiteSpace($ProjectPath)) { throw '项目路径不能为空。' }
-                    $confirmed = Confirm-SetupChoice -Prompt '为该项目生成基础配置？现有文件将逐项确认' -DefaultYes:$false
-                    if (-not $confirmed) {
-                        Write-SetupStatus -Kind Info -Message '已取消。'
-                        continue
+                    '2' {
+                        $workflowResult = Invoke-Workflow -Config $config -WorkflowMode Detect -TargetProject $ProjectPath -RealApply:$false -DeepDetection:$true -ForceRefresh:$true
+                        Show-WorkflowSession -WorkflowResult $workflowResult -TargetProject $ProjectPath
                     }
-                    $workflowResult = Invoke-Workflow -Config $config -WorkflowMode ProjectInit -TargetProject $ProjectPath -RealApply:$confirmed -DeepDetection:$confirmed
-                    Show-WorkflowCompletion -WorkflowResult $workflowResult
-                    $completionShown = $true
-                }
-                '4' {
-                    if ([string]::IsNullOrWhiteSpace($ExportPath)) { $ExportPath = Join-Path (Get-Location) 'codex-setup.export.json' }
-                    $exportResult = Export-SetupConfig -Config $config -Path $ExportPath -Confirm:$false
-                    if ($exportResult.status -eq 'Changed') { Write-SetupStatus -Kind Success -Message "配置已导出：$ExportPath" }
-                    else { Write-SetupStatus -Kind Info -Message "配置文件无需修改：$ExportPath" }
-                }
-                '5' {
-                    if ([string]::IsNullOrWhiteSpace($RollbackManifest)) { $RollbackManifest = Get-RecentRollbackManifest }
-                    if ([string]::IsNullOrWhiteSpace($RollbackManifest)) { throw '没有找到可回滚的运行清单。' }
-                    Invoke-CodexSetupRollback -ManifestPath $RollbackManifest
-                }
-                '6' { Open-CodexSettingsGuide -Config $config }
-                '7' {
-                    if ($config.environmentMode -ne 'WslFirst') {
-                        Write-SetupStatus -Kind Info -Message '当前使用 Windows 原生开发环境；普通检查已覆盖所需项目。'
-                        continue
+                    '3' {
+                        $ProjectPath = Read-Host '项目文件夹完整路径 [Enter 返回]'
+                        if ([string]::IsNullOrWhiteSpace($ProjectPath)) { continue }
+                        $workflowResult = Invoke-Workflow -Config $config -WorkflowMode ProjectInit -TargetProject $ProjectPath -RealApply:$true -DeepDetection:$false
+                        Show-WorkflowSession -WorkflowResult $workflowResult -TargetProject $ProjectPath
                     }
-                    $workflowResult = Invoke-Workflow -Config $config -WorkflowMode Plan -TargetProject $ProjectPath -RealApply:$false -DeepDetection:$true
-                    Show-WorkflowCompletion -WorkflowResult $workflowResult
-                    $completionShown = $true
-                }
-                'R' {
-                    $workflowResult = Invoke-Workflow -Config $config -WorkflowMode Detect -TargetProject $ProjectPath -RealApply:$false -DeepDetection:$false -ForceRefresh:$true
-                    Show-WorkflowCompletion -WorkflowResult $workflowResult
-                    $completionShown = $true
-                }
-                default {
-                    Write-SetupStatus -Kind Warning -Message "无效选项：$selection"
+                    'M' { Show-SetupMoreMenu -Config $config }
                 }
             }
-            if (-not $completionShown) {
-                Write-Host ''
-                [void](Read-Host '按 Enter 返回主菜单')
+            catch {
+                Write-SetupStatus -Kind Error -Message (ConvertTo-RedactedText $_.Exception.Message)
+                $script:detectionCache.Clear()
+                [void](Read-Host '按 Enter 返回首页；可选择“开始或修复”重试')
             }
         }
     }
